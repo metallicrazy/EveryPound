@@ -329,6 +329,20 @@ button { cursor: pointer; }
 .refund-pill:has(input:checked) .sw::after { transform: translateX(18px); }
 .refund-pill:has(input:focus-visible) .sw { outline: 2px solid var(--accent); outline-offset: 2px; }
 .refund-pill input { position: absolute; opacity: 0; width: 1px; height: 1px; padding: 0; margin: 0; border: 0; }
+/* on/off settings: same switch as Refund, in a tidy list */
+.switches { display: grid; border-radius: 12px; background: var(--surface-2); overflow: hidden; }
+.switch-row { position: relative; display: flex; align-items: center; gap: 14px; padding: 12px 14px; cursor: pointer; }
+.switch-row + .switch-row { border-top: 1px solid var(--line); }
+.switch-row .sr-text { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+.switch-row small { display: block; margin-top: 2px; font-size: 13px; font-weight: 400; color: var(--muted); line-height: 1.4; }
+.switch-row input { position: absolute; opacity: 0; width: 1px; height: 1px; padding: 0; margin: 0; border: 0; }
+.switch-row .sw { position: relative; width: 42px; height: 24px; border-radius: 999px; background: var(--track); transition: background .15s ease; flex: none; }
+.switch-row .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s ease; }
+.switch-row:has(input:checked) .sw { background: var(--accent); }
+.switch-row:has(input:checked) .sw::after { transform: translateX(18px); }
+.switch-row:has(input:focus-visible) .sw { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row-in .limitbar { grid-column: 1 / -1; margin-top: 4px; }
+.row-in .limitbar .lb-track { height: 6px; }
 .amtrow { display: flex; gap: 8px; align-items: stretch; }
 .amtrow > input { flex: 1; text-align: right; }
 /* Right-thumb layout: date on the left, amount on the right */
@@ -829,6 +843,9 @@ a.btn { text-decoration: none; display: inline-block; }
     return `<div class="limitbar${pct >= 0.9 ? ' high' : ''}"><div class="lb-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct * 100)}" aria-label="Credit limit used"><i style="width:${(pct * 100).toFixed(1)}%"></i></div>
       <div class="lb-text num"><span>${money(used)} used of ${money(l.limit)}</span><span>${avail >= 0 ? money(avail) + ' available' : money(-avail) + ' over limit'}</span></div></div>`;
   }
+  const switchRow = (id, on, title, desc) => `<label class="switch-row field wide"><span class="sr-text">${title}<small>${desc}</small></span><input type="checkbox" id="${id}" role="switch"${on ? ' checked' : ''}><span class="sw" aria-hidden="true"></span></label>`;
+  const AUTO_DESC = 'Budgets that haven\u2019t started get the payment needed to clear it.';
+  const DD_DESC = 'Swipe it to mark it paid. If it\u2019s due on a weekend or bank holiday, it leaves the next working day.';
   function balanceLabel(l) {
     if (!l.debtId) return '';
     if (!l.balanceSet) return '<b>Set the balance</b>';
@@ -872,7 +889,7 @@ a.btn { text-decoration: none; display: inline-block; }
       <button class="l-name" data-${S.readOnly ? 'open' : 'rename'}="${esc(l.id)}" aria-label="${esc(l.name)}${paid ? ', paid' : ''}${S.readOnly ? '' : ', tap to rename'}"><span>${paid ? '<i class="paidtick" aria-hidden="true">✓</i>' : ''}${esc(l.name)}</span>${sub ? `<small>${sub}</small>` : ''}${promo ? `<small>${promo}</small>` : ''}</button>
       ${S.readOnly ? `<span class="l-plan num">${money(l.planned)}</span>` : `<button class="l-plan num" data-plan="${esc(l.id)}" aria-label="Planned ${money(l.planned)} for ${esc(l.name)}, tap to change">${money(l.planned)}</button>`}
       <button class="l-val num${over ? ' over' : ''}" data-open="${esc(l.id)}" aria-label="${money(l.left)} remaining, open ${esc(l.name)}">${money(l.left)}</button>
-      <span class="bar"><i style="width:${(remainFrac(l) * 100).toFixed(1)}%"></i></span>
+      <span class="bar"><i style="width:${(remainFrac(l) * 100).toFixed(1)}%"></i></span>${g.kind === 'debt' ? limitBar(l) : ''}
     </div></li>`;
   }
   function renderLedger(c) {
@@ -1225,8 +1242,7 @@ a.btn { text-decoration: none; display: inline-block; }
             <div class="field"><label for="ndPromo">0% offer ends</label><input id="ndPromo" type="date"></div>
             <div class="field"><label for="ndPlan">Payment this month (£)</label><input id="ndPlan" class="money" placeholder="£0.00"></div>
             <div class="field"><label for="ndDue">Due date</label><input id="ndDue" type="date"></div>
-            <label class="check field wide"><input type="checkbox" id="ndAuto" checked> In budgets that haven't started, set the payment to what's needed to clear it</label>
-            <label class="check field wide"><input type="checkbox" id="ndDD"> Direct debit: swipe to mark it paid. If it’s due on a weekend or bank holiday, it leaves the next working day.</label>
+            <div class="switches field wide">${switchRow('ndAuto', true, 'Auto-set future payments', AUTO_DESC)}${switchRow('ndDD', false, 'Direct debit', DD_DESC)}</div>
           </div>
           <p class="err" id="ndErr" hidden></p>
           <div class="btnrow" style="margin-top:12px"><button class="btn" type="submit">Add debt</button></div></form></div>`;
@@ -1296,8 +1312,8 @@ a.btn { text-decoration: none; display: inline-block; }
             <div class="field wide"><label for="edLimit">Credit limit (£)</label><input id="edLimit" class="money" placeholder="Cards only, leave blank for loans" value="${Number.isFinite(debt.limit) && debt.limit > 0 ? (debt.limit / 100).toFixed(2) : ''}"></div>
             <div class="field"><label for="edApr">Interest rate (%)</label><input id="edApr" inputmode="decimal" placeholder="0" value="${Number.isFinite(debt.apr) ? debt.apr : ''}"></div>
             <div class="field"><label for="edPromo">0% offer ends</label><input id="edPromo" type="date" value="${esc(debt.promoEnd || '')}"></div>
-            <label class="check field wide"><input type="checkbox" id="edAuto"${raw.manual ? '' : ' checked'}> In budgets that haven't started, set the payment to what's needed to clear it</label>` : ''}
-            <label class="check field wide"><input type="checkbox" id="edDD"${raw.dd ? ' checked' : ''}> Direct debit: swipe to mark it paid. If it’s due on a weekend or bank holiday, it leaves the next working day.</label>
+            ` : ''}
+            <div class="switches field wide">${debt ? switchRow('edAuto', !raw.manual, 'Auto-set future payments', AUTO_DESC) : ''}${switchRow('edDD', !!raw.dd, 'Direct debit', DD_DESC)}</div>
           </div>
           <p class="err" id="edErr" hidden></p>
           <div class="btnrow" style="margin-top:12px"><button class="btn danger-ghost" type="button" data-del="${esc(raw.id)}">Delete item</button><button class="btn" type="submit">Save changes</button></div>
