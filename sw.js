@@ -1,7 +1,7 @@
 // Offline app shell. Pages: network first, cached copy when offline.
 // Scripts, fonts and icons: cached copy straight away, refreshed in the background.
 // Firestore and sign-in traffic is never touched here (Firestore keeps its own offline copy).
-const CACHE = 'everypound-v1';
+const CACHE = 'everypound-v2';
 const SHELL = ['./', 'index.html', 'app.js', 'firebase-config.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 const CDN = ['www.gstatic.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 

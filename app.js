@@ -21,6 +21,7 @@ const G_ICON = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="tru
 
 function screen(html) {
   const el = $('stateScreen'); el.innerHTML = html; el.hidden = false;
+  document.querySelector('header.top').hidden = true;
   $('app').hidden = true; $('tabbar').hidden = true;
 }
 
@@ -183,6 +184,7 @@ onAuthStateChanged(auth, async user => {
     H = await findHousehold(user);
     try { localStorage.setItem('ep.household.' + user.uid, H.id); } catch {}
     booted = true;
+    document.querySelector('header.top').hidden = false;
     EP().boot(makeDb(H.id));
   } catch (e) {
     screen(`<h2>Can't open your budget</h2><p>${e && e.code === 'permission-denied' ? 'This account does not have access yet.' : 'Check your connection, then reload the page.'}</p>
