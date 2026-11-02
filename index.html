@@ -237,6 +237,7 @@ button { cursor: pointer; }
 .recent { list-style: none; margin: 0; padding: 0; }
 .recent li { display: grid; grid-template-columns: 46px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .recent li:last-child { border-bottom: 0; }
+.recent li.empty { display: block; padding: 4px 0 2px; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .datechip { font-size: 11px; text-align: center; line-height: 1.1; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 4px 0; }
 .datechip b { display: block; font-size: 15px; color: var(--ink); }
 .recent .who { min-width: 0; }
@@ -885,7 +886,7 @@ a.btn { text-decoration: none; display: inline-block; }
       const note = k === 'debt' ? (t.amount < 0 ? ' · card spend' : ' · payment') : '';
       return `<li><span class="datechip">${MONTHS[d.getMonth()]}<b>${d.getDate()}</b></span><span class="who"><span>${esc(t.payee || 'No description')}</span><small>${esc(f ? f.l.name : 'Removed item')}${note}</small></span>
         <span class="amt num${plus ? ' in' : ''}">${plus ? '+' : '−'}${money(Math.abs(t.amount))}</span></li>`;
-    }).join('') : '<li class="muted">Nothing logged in this budget yet.</li>';
+    }).join('') : '<li class="empty">Nothing logged in this budget yet. Spending you add will show up here.</li>';
     $('side').innerHTML = `
       <div class="card">
         <div class="seg" role="group" aria-label="Summary view">
