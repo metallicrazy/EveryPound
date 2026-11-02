@@ -138,13 +138,53 @@ async function importBackup(data, progress) {
 }
 
 // Empty household: offer to bring a backup across
+// ---------- first run: start fresh, or bring a backup across ----------
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const fromIso = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+// A budget runs from its start date to the day before the same date next month (same rule as "Plan next")
+function periodFrom(startIso) {
+  const s = fromIso(startIso), e = new Date(s.getFullYear(), s.getMonth() + 1, s.getDate() - 1);
+  return { start: iso(s), end: iso(e), id: iso(e).slice(0, 7), label: MONTHS[e.getMonth()] + ' ' + e.getFullYear() };
+}
+const fmt = s => fromIso(s).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+// Starter buckets and lines, all at £0, for someone with nothing to import
+function starterDoc(per) {
+  const groups = {
+    income: { name: 'Income', kind: 'income', color: 'slate', order: 0 },
+    bills: { name: 'Bills', kind: 'expense', color: 'blue', order: 1 },
+    spending: { name: 'Spending', kind: 'expense', color: 'red', order: 2 },
+    savings: { name: 'Savings', kind: 'expense', color: 'green', order: 3 },
+    debt: { name: 'Debt', kind: 'debt', color: 'purple', order: 4 },
+  };
+  const lines = {};
+  const add = (groupId, names) => names.forEach((name, i) => { lines['l-' + groupId + i] = { name, planned: 0, groupId, order: i }; });
+  add('income', ['Salary']);
+  add('bills', ['Rent or mortgage', 'Council Tax', 'Gas and electric', 'Water', 'Phone', 'Broadband']);
+  add('spending', ['Food shopping', 'Fuel', 'Fun money']);
+  add('savings', ['Emergency fund']);
+  return { label: per.label, start: per.start, end: per.end, groups, lines, skip: {} };
+}
+
 window.EP_EMPTY = () => {
-  screen(`<h2>No budgets yet</h2><p>Bring your budgets across from an EveryPound backup file.</p>
-    <label class="btn" for="importFile" style="cursor:pointer">Choose backup file</label><input type="file" id="importFile" accept=".json,application/json">
+  const today = new Date(), first = iso(new Date(today.getFullYear(), today.getMonth(), 1));
+  screen(`<h2>Let's set up your budget</h2>
+    <p>Pick the day your budget month starts. Most people use payday or the 1st.</p>
+    <div class="startbox"><label for="startDate">Starts on</label><input type="date" id="startDate" value="${first}"><p class="fine" id="startRange"></p></div>
+    <div class="btnrow startrow"><label class="btn ghost" for="importFile">Import a backup</label><button class="btn" type="button" id="startBtn">Start budget</button></div>
+    <input type="file" id="importFile" accept=".json,application/json">
     <p class="fine" id="importMsg"></p>`);
+  const showRange = () => { const v = $('startDate').value; $('startRange').textContent = v ? 'Runs ' + fmt(v) + ' – ' + fmt(periodFrom(v).end) + ', then the same dates each month' : ''; };
+  $('startDate').oninput = showRange; showRange();
+  $('startBtn').onclick = async () => {
+    const v = $('startDate').value, msg = $('importMsg'); if (!v) { $('startDate').focus(); return; }
+    const per = periodFrom(v); $('startBtn').disabled = true; msg.style.color = ''; msg.textContent = 'Setting up…';
+    try { await setDoc(doc(fs, 'households/' + H.id + '/budgets/' + per.id), starterDoc(per)); document.querySelector('header.top').hidden = false; }
+    catch { $('startBtn').disabled = false; msg.style.color = 'var(--bad)'; msg.textContent = "That didn't save. Check your connection and try again."; }
+  };
   $('importFile').onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;
-    const msg = $('importMsg');
+    const msg = $('importMsg'); msg.style.color = '';
     try {
       const data = JSON.parse(await f.text());
       const n = Object.keys(data.budgets || {}).length;

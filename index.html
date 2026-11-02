@@ -435,6 +435,12 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
 .acct .who strong { display: block; font-size: 14px; }
 .acct .who span { display: block; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct .btnrow .btn { padding: 8px 14px; font-size: 14px; }
+.startbox { display: grid; gap: 6px; max-width: 320px; margin: 18px auto 0; text-align: left; }
+.startbox label { font-size: 13px; font-weight: 600; color: var(--ink); }
+.startbox input { font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); }
+.startbox .fine { margin: 2px 0 0; }
+.startrow { justify-content: flex-end; flex-wrap: nowrap; max-width: 320px; margin: 18px auto 0; }
+.startrow .btn { margin-top: 0; cursor: pointer; }
 </style>
 
 </head>
@@ -766,13 +772,31 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
     if (!l.balanceSet) return '<b>Set the balance</b>';
     return 'Balance <span class="' + (l.balance < 0 ? 'owe' : 'clear') + '">' + (l.balance < 0 ? money(l.balance) : l.balance === 0 ? 'paid off' : money(l.balance)) + '</span>';
   }
+  // Buckets a line can move to: income lines between income buckets, spending lines between spending
+  // buckets. Debt lines stay put (they carry a balance from budget to budget).
+  function bucketChoices(p, g) {
+    if (!g || g.kind === 'debt') return [];
+    const isInc = g.kind === 'income';
+    return (p.groups || []).filter(x => x.kind !== 'debt' && (x.kind === 'income') === isInc);
+  }
+  function bucketPicker(p, g) {
+    const opts = bucketChoices(p, g); if (opts.length < 2) return '';
+    return `<div class="field wide"><label for="edBucket">Bucket</label><select id="edBucket">${opts.map(x => `<option value="${esc(x.id)}"${x.id === g.id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>`;
+  }
+  function moveLineIn(groups, lineId, toId) {
+    const src = groups.find(g => (g.lines || []).some(l => l.id === lineId)), dst = groups.find(g => g.id === toId);
+    if (!src || !dst || src.id === dst.id) return false;
+    const i = src.lines.findIndex(l => l.id === lineId);
+    dst.lines = dst.lines || []; dst.lines.push(src.lines.splice(i, 1)[0]);
+    return true;
+  }
   function promoLabel(l) {
     const pp = promoPlan(l, period()); if (!pp || pp.done || pp.ended) return pp && pp.ended ? '<span class="short">0% ended ' + fmtMonth(pp.end) + '</span>' : '';
     return '<span class="' + (pp.short ? 'short' : 'ok') + '">Pay ' + money(pp.need) + '/mo to clear</span>';
   }
-  // Only dated direct debits can be marked paid in one go; everything else is burned down by logging
+  // Direct debits (dated or not) can be marked paid in one go; everything else is burned down by logging
   // (debts are always logged by hand)
-  const canPay = (g, l) => !S.readOnly && g.kind !== 'income' && g.kind !== 'debt' && !g.spentInFull && !!l.dd && !!l.due && l.left > 0;
+  const canPay = (g, l) => !S.readOnly && g.kind !== 'income' && g.kind !== 'debt' && !g.spentInFull && !!l.dd && l.left > 0;
   const isPaid = (g, l) => g.kind !== 'income' && !g.spentInFull && l.planned > 0 && l.left === 0 && l.actual > 0;
   function lineRow(g, l) {
     const over = g.kind !== 'income' && g.kind !== 'debt' && !g.spentInFull && l.actual > l.planned;
@@ -808,7 +832,7 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
       const collapsed = !!S.collapsed[g.id];
       const valHead = g.kind === 'income' ? 'To come' : g.kind === 'debt' ? 'To pay' : 'Remaining';
       html += `<section class="group${collapsed ? ' collapsed' : ''}${g.kind === 'income' ? ' income' : ''}" data-group="${esc(g.id)}">
-        <div class="g-head"><div class="g-title"><button class="g-toggle" data-toggle="${esc(g.id)}" aria-expanded="${!collapsed}">${ICON_CHEV}<span class="dot" style="background:${colorVar(g.color)}"></span><h2>${esc(g.name)}</h2></button>${S.readOnly ? '' : `<button class="g-more" data-groupedit="${esc(g.id)}" aria-label="Edit group ${esc(g.name)}">${ICON_PEN}</button>`}</div>
+        <div class="g-head"><div class="g-title"><button class="g-toggle" data-toggle="${esc(g.id)}" aria-expanded="${!collapsed}">${ICON_CHEV}<span class="dot" style="background:${colorVar(g.color)}"></span><h2>${esc(g.name)}</h2></button>${S.readOnly ? '' : `<button class="g-more" data-groupedit="${esc(g.id)}" aria-label="Edit bucket ${esc(g.name)}">${ICON_PEN}</button>`}</div>
         <span class="col-h">Planned</span><span class="col-h">${valHead}</span></div>
         ${g.kind === 'debt' && !g.lines.length ? '<p class="empty-g">Add a card or loan to track its balance from budget to budget.</p>' : ''}
         <ul class="lines">${g.lines.map(l => lineRow(g, l)).join('')}</ul>
@@ -816,7 +840,7 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
           <b class="num">${money(g.planned)}</b><b class="num">${money(g.left)}</b></div>
       </section>`;
     }
-    if (!S.readOnly) html += '<button class="addgroup" data-addgroup>+ Add group</button>';
+    if (!S.readOnly) html += '<button class="addgroup" data-addgroup>+ Add bucket</button>';
     $('ledger').innerHTML = html;
     $('debtNames').innerHTML = Object.values(S.debts).map(d => `<option value="${esc(d.name)}"></option>`).join('');
   }
@@ -835,7 +859,7 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
   function renderSide(c) {
     const m = S.sumMode, p = period();
     let segs, total, label, centre, sub;
-    if (m === 'planned') { segs = c.exp.map(g => ({ color: g.color, value: g.planned })); total = Math.max(c.incomePlanned, c.expPlanned); label = 'Income'; centre = c.incomePlanned; sub = c.exp.length + ' groups'; }
+    if (m === 'planned') { segs = c.exp.map(g => ({ color: g.color, value: g.planned })); total = Math.max(c.incomePlanned, c.expPlanned); label = 'Income'; centre = c.incomePlanned; sub = c.exp.length + (c.exp.length === 1 ? ' bucket' : ' buckets'); }
     else if (m === 'spent') { segs = c.exp.map(g => ({ color: g.color, value: g.actual })); total = c.expPlanned; label = 'Spent'; centre = c.expSpent; sub = 'of ' + money(c.expPlanned); }
     else { segs = c.exp.map(g => ({ color: g.color, value: Math.max(g.left, 0) })); total = c.expPlanned; label = 'Remaining'; centre = c.expLeft; sub = 'of ' + money(c.expPlanned); }
     const showPct = m === 'planned';
@@ -1108,13 +1132,13 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
       const g = o.groupId ? (p.groups || []).find(x => x.id === o.groupId) : null;
       if (o.groupId && !g) { closeDrawer(); return; }
       const n = g ? (g.lines || []).length : 0;
-      d.innerHTML = `<div class="d-head"><span class="chip">${g ? 'Edit group' : 'New group'}</span><button class="iconbtn" data-close aria-label="Close"><span class="ico-x">${ICON_X}</span><span class="ico-back">${ICON_BACK}</span></button></div>
-        <div class="d-body"><h2 id="dTitle">${g ? esc(g.name) : 'New group'}</h2>
+      d.innerHTML = `<div class="d-head"><span class="chip">${g ? 'Edit bucket' : 'New bucket'}</span><button class="iconbtn" data-close aria-label="Close"><span class="ico-x">${ICON_X}</span><span class="ico-back">${ICON_BACK}</span></button></div>
+        <div class="d-body"><h2 id="dTitle">${g ? esc(g.name) : 'New bucket'}</h2>
           <form class="panel" id="groupForm" novalidate>
             <div class="field"><label for="grName">Name</label><input id="grName" autocomplete="off" placeholder="e.g. Car" value="${g ? esc(g.name) : ''}"></div>
             ${g && n ? `<p class="d-sub" style="margin:0">Deleting it also deletes its ${n} item${n === 1 ? '' : 's'} and their transactions in this budget.</p>` : ''}
             <p class="err" id="grErr" hidden></p>
-            <div class="btnrow">${g ? `<button class="btn danger-ghost" type="button" data-delgroup="${esc(g.id)}">Delete group</button>` : ''}<button class="btn" type="submit">${g ? 'Save' : 'Create group'}</button></div>
+            <div class="btnrow">${g ? `<button class="btn danger-ghost" type="button" data-delgroup="${esc(g.id)}">Delete bucket</button>` : ''}<button class="btn" type="submit">${g ? 'Save' : 'Create bucket'}</button></div>
           </form></div>`;
       if (!g) setTimeout(() => { const el = $('grName'); el && el.focus(); }, 30);
       return;
@@ -1160,12 +1184,13 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
             <div class="field wide"><label for="edName">Name</label><input id="edName" value="${esc(raw.name)}"></div>
             <div class="field"><label for="edPlan">Planned (£)</label><input id="edPlan" class="money" placeholder="£0.00" value="${(raw.planned / 100).toFixed(2)}"></div>
             <div class="field"><label for="edDue">Due date</label><input id="edDue" type="date" value="${esc(raw.due || '')}"></div>
+            ${bucketPicker(p, f.g)}
             ${debt ? `<div class="field wide"><label for="edOpen">Starting balance owed (£)</label><input id="edOpen" class="money" placeholder="£0.00" value="${Number.isFinite(debt.opening) ? (Math.abs(debt.opening) / 100).toFixed(2) : ''}">
               <small>What you owed before tracking any payments here. It carries into every budget.</small></div>
             <div class="field"><label for="edApr">Interest rate (%)</label><input id="edApr" inputmode="decimal" placeholder="0" value="${Number.isFinite(debt.apr) ? debt.apr : ''}"></div>
             <div class="field"><label for="edPromo">0% offer ends</label><input id="edPromo" type="date" value="${esc(debt.promoEnd || '')}"></div>
             <label class="check field wide"><input type="checkbox" id="edAuto"${raw.manual ? '' : ' checked'}> In budgets that haven't started, set the payment to what's needed to clear it</label>` : ''}
-            <label class="check field wide"><input type="checkbox" id="edDD"${raw.dd ? ' checked' : ''}> Paid by direct debit (moves to the next working day)</label>
+            <label class="check field wide"><input type="checkbox" id="edDD"${raw.dd ? ' checked' : ''}> Direct debit: swipe to mark paid (a due date moves to the next working day)</label>
           </div>
           <p class="err" id="edErr" hidden></p>
           <div class="btnrow" style="margin-top:12px"><button class="btn danger-ghost" type="button" data-del="${esc(raw.id)}">Delete item</button><button class="btn" type="submit">Save changes</button></div>
@@ -1723,7 +1748,7 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
     }
     if (e.target.id === 'groupForm') {
       const name = $('grName').value.trim(), err = $('grErr'), p = period();
-      if (!name) { err.textContent = 'Give the group a name.'; err.hidden = false; return; }
+      if (!name) { err.textContent = 'Give the bucket a name.'; err.hidden = false; return; }
       const groups = structuredClone(p.groups || []);
       if (S.open.groupId) { const g = groups.find(x => x.id === S.open.groupId); if (g) g.name = name; }
       else {
@@ -1782,8 +1807,20 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
       }
       S.open.edit = null;
       const was = (findLine(p, S.open.lineId) || {}).l?.planned ?? 0, lineId = S.open.lineId;
+      const toBucket = $('edBucket') ? $('edBucket').value : null;
+      const moved = toBucket ? moveLineIn(groups, lineId, toBucket) : false;
       await saveGroups(p, groups);
-      if (was > 0 && planned !== was && looksLarge(planned, was)) toast('Planned ' + money(planned) + ' for ' + name + ' (was ' + money(was) + ')', 'Undo', () => {
+      if (moved) {
+        // Carry the move into budgets already planned after this one (past budgets keep their history)
+        let also = 0;
+        for (const q of S.periods.filter(q => q.start > p.start && !q.archive)) {
+          const gq = structuredClone(q.groups || []);
+          if (moveLineIn(gq, lineId, toBucket)) { await saveGroups(q, gq); also++; }
+        }
+        const dst = groups.find(g => g.id === toBucket);
+        toast('Moved ' + name + ' to ' + dst.name + (also ? ' (and ' + also + ' later budget' + (also === 1 ? '' : 's') + ')' : ''));
+      }
+      else if (was > 0 && planned !== was && looksLarge(planned, was)) toast('Planned ' + money(planned) + ' for ' + name + ' (was ' + money(was) + ')', 'Undo', () => {
         const g2 = structuredClone(p.groups); for (const g of g2) for (const l of g.lines) if (l.id === lineId) l.planned = was; saveGroups(p, g2);
       });
       else toast('Saved');
