@@ -449,8 +449,13 @@ function runTour(key, steps) {
   const place = () => {
     // follow the element if the app re-draws it (e.g. after you change an amount)
     if (st && !st.el.isConnected) { const again = resolve(steps[i]); if (again) st.el = again.el; }
-    if (!st || !st.el.isConnected) return;
-    const r = st.el.getBoundingClientRect(), pad = 6;
+    if (!st) return;
+    // while you're typing into something the step opened (e.g. the amount box), light that up too
+    const ae = document.activeElement, typing = ae && !ae.closest('#tour') && ae.matches('input, select, textarea') ? ae : null;
+    const rects = [st.el.isConnected && visible(st.el) ? st.el : null, typing].filter(Boolean).map(e => e.getBoundingClientRect());
+    if (!rects.length) return;
+    const pad = 6, r = { left: Math.min(...rects.map(x => x.left)), top: Math.min(...rects.map(x => x.top)), right: Math.max(...rects.map(x => x.right)), bottom: Math.max(...rects.map(x => x.bottom)) };
+    r.width = r.right - r.left; r.height = r.bottom - r.top;
     const h = { l: r.left - pad, t: r.top - pad, w: r.width + pad * 2, h: r.height + pad * 2 }; lastRect = h;
     Object.assign($('tourHole').style, { left: h.l + 'px', top: h.t + 'px', width: h.w + 'px', height: h.h + 'px' });
     const set = (k, o) => Object.assign(document.querySelector(`.tour-block[data-b="${k}"]`).style, o);
