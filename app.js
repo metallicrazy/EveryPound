@@ -411,7 +411,7 @@ function scheduleTips() { if (tourOn) return; clearTimeout(tipsTimer); tipsTimer
 function checkTips() {
   if (tourOn || document.body.classList.contains('typing') || $('epModal')) return;
   const ae = document.activeElement; if (ae && ae.id !== 'txAmt' && ae.matches('input:not([type=checkbox]):not([type=date]), textarea')) return;
-  for (const [key, when, steps] of TOURS) if (!META.tips[key] && when()) { runTour(key, steps); return; }
+  for (const [key, when, steps] of TOURS) if (!META.tips[key] && when()) { runTour(key, steps, when); return; }
 }
 function markSeen(key) {
   META.tips[key] = true;
@@ -432,7 +432,7 @@ function swipeStep() {
   return { el: row, text, peek: TOUCH ? (paid ? 'swiped-paid' : 'swiped-del') : null };
 }
 // The spotlit element stays usable (try it, then Next); everything around it is dimmed and blocked.
-function runTour(key, steps) {
+function runTour(key, steps, when) {
   const resolve = ([sel, text, pick, kind]) => {
     if (kind === 'swipe') return swipeStep();
     const el = typeof sel === 'function' ? sel() : q(sel); if (!el) return null;
@@ -482,14 +482,23 @@ function runTour(key, steps) {
       const row = st.el; peekT = setTimeout(() => { row.classList.add(st.peek); setTimeout(() => row.classList.remove(st.peek), 1100); }, 500);
     }
   };
-  const tick = setInterval(place, 250); // keeps the spotlight on the element while you use it
-  const end = () => {
-    clearTimeout(peekT); clearInterval(tick);
+  // keeps the spotlight on the element while you use it; if the page changes under the tips
+  // (a line opened, a tab switched) they close quietly and come back next time you're here
+  const tick = setInterval(() => { if (when && !when()) end(false); else place(); }, 250);
+  // a plain tap on the spotlit item mustn't open the line: on phones only press-and-hold edits
+  const guard = e => {
+    if (!st || !st.el.contains(e.target)) return;
+    const t = e.target.closest('[data-open], [data-plan], [data-rename]'); if (!t) return;
+    if (t.matches('[data-open]') || TOUCH) { e.preventDefault(); e.stopPropagation(); }
+  };
+  document.addEventListener('click', guard, true);
+  const end = (seen = true) => {
+    clearTimeout(peekT); clearInterval(tick); document.removeEventListener('click', guard, true);
     removeEventListener('resize', place); removeEventListener('scroll', place, true); removeEventListener('keydown', onKey);
-    const t = $('tour'); if (t) t.remove(); tourOn = false; markSeen(key); scheduleTips();
+    const t = $('tour'); if (t) t.remove(); tourOn = false; if (seen) markSeen(key); scheduleTips();
   };
   const onKey = e => { if (e.key === 'Escape' && !document.body.classList.contains('typing') && !(document.activeElement && document.activeElement.matches('input'))) end(); };
-  $('tourSkip').onclick = end;
+  $('tourSkip').onclick = () => end();
   $('tourNext').onclick = () => { if (document.activeElement && document.activeElement.matches('input')) document.activeElement.blur(); go(); };
   addEventListener('resize', place); addEventListener('scroll', place, true); addEventListener('keydown', onKey);
   go();
