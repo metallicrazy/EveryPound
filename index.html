@@ -446,6 +446,39 @@ details.edit[open] summary::after { transform: rotate(-135deg); margin-top: 3px;
 .demo-bar a { color: #7cc8f5; text-decoration: none; padding: 2px 8px; }
 @media (min-width: 861px) { .demo-bar { bottom: 16px; } }
 a.btn { text-decoration: none; display: inline-block; }
+/* account card extras, backup nudge */
+.acct-meta { margin: 0; font-size: 13px; color: var(--muted); }
+.acct .btnrow { justify-content: flex-start; }
+.nudge { display: flex; align-items: center; gap: 12px; background: var(--accent-soft); box-shadow: none; }
+.nudge div { flex: 1; min-width: 0; } .nudge strong { display: block; font-size: 14px; } .nudge span { display: block; font-size: 13px; color: var(--muted); }
+.nudge .btn { flex: none; padding: 8px 14px; font-size: 14px; }
+/* setup checklist */
+.checklist { margin-bottom: 16px; padding: 14px 18px; }
+.ck-head { display: flex; align-items: center; gap: 10px; } .ck-head strong { flex: 1; font-size: 15px; } .ck-head .muted { font-size: 13px; }
+.ck-head .iconbtn { width: 32px; height: 32px; margin-left: 0; font-size: 14px; }
+.checklist ol { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.checklist li { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.checklist .ck { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }
+.checklist li.ok { color: var(--muted); text-decoration: line-through; }
+.checklist li.ok .ck { background: var(--good); border-color: var(--good); color: #fff; }
+/* share sheet */
+.ep-modal { position: fixed; inset: 0; z-index: 90; background: #0007; display: grid; place-items: end center; }
+@media (min-width: 600px) { .ep-modal { place-items: center; } }
+.ep-sheet { background: var(--surface); width: min(440px, 100%); border-radius: 18px 18px 0 0; padding: 18px 18px calc(env(safe-area-inset-bottom, 0px) + 18px); box-shadow: 0 -4px 24px #0003; }
+@media (min-width: 600px) { .ep-sheet { border-radius: 18px; } }
+.ep-head { display: flex; align-items: center; gap: 10px; } .ep-head h2 { flex: 1; margin: 0; font-size: 18px; font-family: var(--f-display); }
+.ep-sheet p.muted { font-size: 14px; color: var(--muted); margin: 8px 0 12px; }
+.ep-list { list-style: none; margin: 0 0 12px; padding: 0; } .ep-list li { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.ep-list small { color: var(--muted); } .ep-list .linkbtn { margin: 0; padding: 4px 0; color: var(--bad); }
+.ep-add { display: flex; gap: 8px; } .ep-add input { flex: 1; min-width: 0; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+/* page tips */
+.tour { position: fixed; inset: 0; z-index: 100; }
+.tour-hole { position: fixed; border-radius: 12px; box-shadow: 0 0 0 9999px #0b151299; transition: all .25s ease; pointer-events: none; }
+.tour-bubble { position: fixed; background: var(--surface); border-radius: 14px; padding: 14px 14px 12px; box-shadow: 0 8px 28px #0004; transition: top .25s ease, left .25s ease; }
+.tour-bubble p { margin: 0 0 12px; font-size: 15px; line-height: 1.45; color: var(--ink); }
+.tour-foot { display: flex; align-items: center; gap: 8px; } .tour-foot span { flex: 1; text-align: center; font-size: 12px; color: var(--muted); }
+.tour-foot .btn { padding: 8px 14px; font-size: 14px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 
 </head>
@@ -823,9 +856,10 @@ a.btn { text-decoration: none; display: inline-block; }
     S.ledgerStale = false;
     let html = '';
     const tb = c.toBudget;
-    html += tb === 0
+    html += tb === 0 && c.incomePlanned > 0
       ? `<div class="banner"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.6"/><path d="m6.5 10 2.4 2.4 4.6-4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Every pound has a job<small class="num">${money(c.incomePlanned)} planned</small></div>`
-      : `<div class="banner warn"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.6"/><path d="M10 5.5v5.5M10 14v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>${tb > 0 ? money(tb) + ' still needs a job<small class="num">' + money(c.incomePlanned) + ' income</small>' : '<span class="warntxt"><b class="num">' + money(-tb) + ' over budget</b><span class="num">Change income to ' + money(c.expPlanned) + ' or adjust the budget</span></span>' + (S.readOnly ? '' : '<button class="btn fixinc" data-fixincome>Match income</button>')}</div>`;
+      : `<div class="banner warn"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" stroke="currentColor" stroke-width="1.6"/><path d="M10 5.5v5.5M10 14v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>${tb === 0 ? 'Add your income to start planning' : tb > 0 ? money(tb) + ' still needs a job<small class="num">' + money(c.incomePlanned) + ' income</small>' : '<span class="warntxt"><b class="num">' + money(-tb) + ' over budget</b><span class="num">Change income to ' + money(c.expPlanned) + ' or adjust the budget</span></span>' + (S.readOnly ? '' : '<button class="btn fixinc" data-fixincome>Match income</button>')}</div>`;
+    if (window.EP_LEDGER_TOP) html += window.EP_LEDGER_TOP(c);
     {
       const p = period();
       if (p && !S.readOnly && !p.archive && todayISO() <= p.end) {
@@ -1150,7 +1184,7 @@ a.btn { text-decoration: none; display: inline-block; }
         return;
       }
       const list = [...S.reminders].sort((a, b) => (a.month - b.month) || ((a.day || 15) - (b.day || 15)));
-      d.innerHTML = head('Yearly reminders') + `<div class="d-body"><div class="formhead" style="justify-content:space-between"><h2 id="dTitle">Yearly reminders</h2><button class="btn" type="button" data-remnew>Add</button></div>
+      d.innerHTML = head('Yearly reminders') + `<div class="d-body"><div class="formhead" style="justify-content:space-between"><h2 id="dTitle" data-tour="reminders">Yearly reminders</h2><button class="btn" type="button" data-remnew>Add</button></div>
         <ul class="remlist">${list.map(r => `<li><button class="remrow tap" data-remedit="${esc(r.id)}"><div><b>${esc(r.name)}</b><small>${remDateText(r)} · ${esc(r.group || 'Joint Account')}</small></div><span class="num amt">${money(r.amount)}</span></button></li>`).join('') || '<li class="muted">No reminders yet.</li>'}</ul>
         <p class="d-sub">Each one shows up in the budget it lands in, with a Review banner to add or skip it.</p></div>`;
       return;
@@ -1875,7 +1909,7 @@ a.btn { text-decoration: none; display: inline-block; }
       scheduleSync();
     }, () => { settled = true; clearTimeout(timer); showState("Can't reach your budget", 'Reopen this page to try again.'); });
   }
-  window.EP = { boot, showState, toast, render };
+  window.EP = { boot, showState, toast, render, S, period, compute };
 })();
 </script>
 <script type="module" src="app.js"></script>

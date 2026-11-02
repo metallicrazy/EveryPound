@@ -4,7 +4,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.2/firebas
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, signOut }
   from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, query, where,
-  getDocs, getDocsFromServer, addDoc, setDoc, deleteDoc, onSnapshot, writeBatch, serverTimestamp }
+  getDoc, getDocs, getDocsFromServer, getDocsFromCache, addDoc, setDoc, deleteDoc, onSnapshot, writeBatch, serverTimestamp, limit }
   from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -26,7 +26,8 @@ const memCol = col => Object.keys(mem.docs).filter(k => k.startsWith(col + '/') 
 const memFire = () => setTimeout(() => mem.subs.forEach(([col, cb]) => cb({ docs: memCol(col), metadata: { fromCache: false } })));
 const memSet = (path, body, merge) => { mem.docs[path] = merge ? mergeDeep(mem.docs[path] || {}, body) : clone(body); memFire(); };
 // The few raw reads and writes outside the adapter go through these, so demo mode never touches Firestore
-const writeDoc = async (path, body) => DEMO ? memSet(path, body) : setDoc(doc(fs, path), body);
+const writeDoc = async (path, body, merge) => DEMO ? memSet(path, body, merge) : setDoc(doc(fs, path), body, merge ? { merge: true } : undefined);
+const readDoc = async path => { if (DEMO) return clone(mem.docs[path]) || null; try { const d = await getDoc(doc(fs, path)); return d.exists() ? d.data() : null; } catch { return null; } };
 const readCol = async path => DEMO ? memCol(path) : (await getDocs(collection(fs, path))).docs;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -74,12 +75,17 @@ async function findHousehold(user) {
     throw e;
   }
   if (!snap.empty) {
-    // if somehow in more than one, prefer the one we own, then the oldest
-    const docs = snap.docs.slice().sort((a, b) => (b.data().owner === user.uid) - (a.data().owner === user.uid));
-    return { id: docs[0].id, data: docs[0].data() };
+    const owned = snap.docs.find(d => d.data().owner === user.uid), invited = snap.docs.find(d => d.data().owner !== user.uid);
+    // Someone who signed in before being invited has an empty household of their own: use the shared one
+    if (owned && invited) {
+      let empty = false;
+      try { empty = (await getDocsFromServer(query(collection(fs, 'households/' + owned.id + '/budgets'), limit(1)))).empty; } catch {}
+      const pick = empty ? invited : owned; return { id: pick.id, data: pick.data() };
+    }
+    const pick = owned || invited; return { id: pick.id, data: pick.data() };
   }
   const ref = doc(collection(fs, 'households'));
-  const data = { name: 'Home', owner: user.uid, emails: [email], created: serverTimestamp() };
+  const data = { name: 'Home', owner: user.uid, emails: [email.toLowerCase()], created: serverTimestamp() };
   await setDoc(ref, data);
   return { id: ref.id, data };
 }
@@ -103,6 +109,7 @@ function makeDb(hid) {
   return {
     collection(path) {
       const ref = collection(fs, base + path);
+      if (path === 'budgets') return { onSnapshot: (cb, err) => budgetsListener(ref, cb, err), add: body => addDoc(ref, body) };
       return {
         onSnapshot: (cb, err) => onSnapshot(ref, { includeMetadataChanges: true }, cb, err),
         add: body => addDoc(ref, body),
@@ -117,6 +124,32 @@ function makeDb(hid) {
       };
     },
   };
+}
+
+// Budgets that started more than ~7 months ago almost never change, so they aren't re-downloaded on every
+// open: they come from the phone's own copy and are refreshed from the server once a week.
+// The app still gets one combined list, exactly as before.
+function budgetsListener(ref, cb, err) {
+  const cutoff = iso(new Date(Date.now() - 210 * 864e5));
+  const liveQ = query(ref, where('start', '>=', cutoff)), histQ = query(ref, where('start', '<', cutoff));
+  const key = 'ep.histAt.' + (H && H.id);
+  let hist = [], live = null, meta = { fromCache: true };
+  const emit = () => { if (live) cb({ docs: [...hist, ...live], metadata: meta }); };
+  (async () => {
+    let stale = true; try { stale = Date.now() - Number(localStorage.getItem(key) || 0) > 7 * 864e5; } catch {}
+    try { if (!stale) hist = (await getDocsFromCache(histQ)).docs; } catch { stale = true; }
+    if (stale || !hist.length) {
+      try { hist = (await getDocsFromServer(histQ)).docs; try { localStorage.setItem(key, String(Date.now())); } catch {} }
+      catch { try { hist = (await getDocsFromCache(histQ)).docs; } catch {} }
+    }
+    emit();
+  })();
+  return onSnapshot(liveQ, { includeMetadataChanges: true }, async snap => {
+    live = snap.docs; meta = snap.metadata;
+    // pick up this device's own edits to older budgets (the local copy has them straight away)
+    try { const h = (await getDocsFromCache(histQ)).docs; if (h.length) hist = h; } catch {}
+    emit();
+  }, err);
 }
 
 // ---------- backup: export + import ----------
@@ -201,7 +234,7 @@ window.EP_EMPTY = () => {
   $('startBtn').onclick = async () => {
     const v = $('startDate').value, msg = $('importMsg'); if (!v) { $('startDate').focus(); return; }
     const per = periodFrom(v); $('startBtn').disabled = true; msg.style.color = ''; msg.textContent = 'Setting up…';
-    try { await writeDoc('households/' + H.id + '/budgets/' + per.id, starterDoc(per)); document.querySelector('header.top').hidden = false; }
+    try { await writeDoc('households/' + H.id + '/budgets/' + per.id, starterDoc(per)); META.setup = { checklist: 'active' }; writeDoc(metaPath('setup'), META.setup).catch(() => {}); document.querySelector('header.top').hidden = false; }
     catch { $('startBtn').disabled = false; msg.style.color = 'var(--bad)'; msg.textContent = "That didn't save. Check your connection and try again."; }
   };
   $('importFile').onchange = async ev => {
@@ -219,32 +252,230 @@ window.EP_EMPTY = () => {
 };
 
 // ---------- account card (Summary) ----------
+const daysAgo = isoTime => Math.floor((Date.now() - new Date(isoTime).getTime()) / 864e5);
+const agoText = d => d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 14 ? d + ' days ago' : Math.round(d / 7) + ' weeks ago';
+function backupNudge() {
+  const at = META.backup && META.backup.at;
+  const created = H && H.data && H.data.created && H.data.created.toMillis ? H.data.created.toMillis() : null;
+  if (at ? daysAgo(at) < 30 : !(created && Date.now() - created > 14 * 864e5)) return '';
+  return `<div class="card nudge"><div><strong>${at ? 'Last backup ' + agoText(daysAgo(at)) : 'No backup yet'}</strong><span>Worth keeping a copy of your budget, just in case.</span></div><button class="btn" type="button" data-ep-backup>Download</button></div>`;
+}
 window.EP_ACCOUNT = () => {
+  const tipsBtn = '<button class="btn ghost" type="button" data-ep-tips>Show tips again</button>';
   if (DEMO) return `<div class="card acct"><div class="who"><span class="av">D</span><div><strong>Demo mode</strong><span>Nothing here is saved. Reload to start again.</span></div></div>
-    <div class="btnrow"><a class="btn ghost" href="./">Leave demo</a></div></div>`;
+    <div class="btnrow"><a class="btn ghost" href="./">Leave demo</a>${tipsBtn}</div></div>`;
   const u = auth.currentUser; if (!u) return '';
   const pic = u.photoURL ? `<img src="${esc(u.photoURL)}" alt="" referrerpolicy="no-referrer">` : `<span class="av">${esc((u.displayName || u.email || '?')[0].toUpperCase())}</span>`;
-  return `<div class="card acct"><div class="who">${pic}<div><strong>${esc(u.displayName || 'Signed in')}</strong><span>${esc(u.email)}</span></div></div>
-    <div class="btnrow"><button class="btn ghost" type="button" data-ep-signout>Sign out</button><button class="btn ghost" type="button" data-ep-backup>Download backup</button></div></div>`;
+  const at = META.backup && META.backup.at, others = ((H && H.data && H.data.emails) || []).filter(e => e !== (u.email || '').toLowerCase());
+  return backupNudge() + `<div class="card acct"><div class="who">${pic}<div><strong>${esc(u.displayName || 'Signed in')}</strong><span>${esc(u.email)}</span></div></div>
+    <p class="acct-meta">${others.length ? 'Shared with ' + others.map(esc).join(', ') + ' · ' : ''}${at ? 'Last backup ' + agoText(daysAgo(at)) : 'No backup yet'}</p>
+    <div class="btnrow"><button class="btn ghost" type="button" data-ep-signout>Sign out</button>${tipsBtn}${isOwner() ? '<button class="btn ghost" type="button" data-ep-share>Share</button>' : ''}<button class="btn ghost" type="button" data-ep-backup>Download backup</button></div></div>`;
 };
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-ep-signout],[data-ep-backup]'); if (!t) return;
+  const t = e.target.closest('[data-ep-signout],[data-ep-backup],[data-ep-tips],[data-ep-share]'); if (!t) return;
   if (t.hasAttribute('data-ep-signout')) { await signOut(auth); location.reload(); return; }
+  if (t.hasAttribute('data-ep-tips')) { resetTips(); return; }
+  if (t.hasAttribute('data-ep-share')) { openShare(); return; }
   t.disabled = true; const was = t.textContent; t.textContent = 'Preparing…';
   try {
     const data = await exportBackup();
     download('everypound-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(data));
-    EP().toast('Backup downloaded');
+    META.backup = { at: new Date().toISOString(), by: DEMO ? 'demo' : (auth.currentUser || {}).email || '' };
+    writeDoc(metaPath('backup'), META.backup).catch(() => {});
+    EP().toast('Backup downloaded'); EP().render();
   } catch { EP().toast("Backup didn't finish. Check your connection."); }
   finally { t.disabled = false; t.textContent = was; }
 });
 
+// ---------- per-account tips state, household setup + backup info ----------
+let UID = null;
+const META = { tips: {}, setup: null, backup: null };
+const metaPath = name => 'households/' + H.id + '/meta/' + name;
+const tipsPath = () => 'households/' + H.id + '/members/' + UID;
+async function loadMeta(uid) {
+  UID = uid;
+  const [me, setup, backup] = await Promise.all([readDoc(tipsPath()), readDoc(metaPath('setup')), readDoc(metaPath('backup'))]);
+  META.tips = (me && me.tips) || {}; META.setup = setup; META.backup = backup;
+}
+const isOwner = () => !DEMO && !!(H && H.data && auth.currentUser && H.data.owner === auth.currentUser.uid);
+
+// ---------- sharing the household ----------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function modal(html) {
+  closeModal();
+  document.body.insertAdjacentHTML('beforeend', `<div class="ep-modal" id="epModal" role="dialog" aria-modal="true"><div class="ep-sheet">${html}</div></div>`);
+  $('epModal').addEventListener('click', e => { if (e.target.id === 'epModal' || e.target.closest('[data-ep-close]')) closeModal(); });
+}
+const closeModal = () => { const m = $('epModal'); if (m) m.remove(); };
+function openShare() {
+  const me = (auth.currentUser.email || '').toLowerCase(), emails = (H.data.emails || []).slice();
+  const row = e => `<li><span>${esc(e)}${e === me ? ' <small>(you)</small>' : ''}</span>${e === me ? '' : `<button type="button" class="linkbtn" data-ep-unshare="${esc(e)}">Remove</button>`}</li>`;
+  modal(`<div class="ep-head"><h2>Share this budget</h2><button class="iconbtn" type="button" data-ep-close aria-label="Close">✕</button></div>
+    <p class="muted">Anyone added here signs in with that Google account and sees the same budget. Changes sync both ways.</p>
+    <ul class="ep-list">${emails.map(row).join('')}</ul>
+    <form id="shareForm" class="ep-add" novalidate><input id="shareEmail" type="email" autocomplete="email" placeholder="their.email@gmail.com"><button class="btn" type="submit">Add</button></form>
+    <p class="err" id="shareErr" hidden></p>`);
+  $('shareForm').onsubmit = async ev => {
+    ev.preventDefault();
+    const v = $('shareEmail').value.trim().toLowerCase(), err = $('shareErr');
+    if (!EMAIL_RE.test(v)) { err.textContent = 'Enter their email address, like name@gmail.com.'; err.hidden = false; return; }
+    if (emails.includes(v)) { err.textContent = 'They already have access.'; err.hidden = false; return; }
+    await saveEmails([...emails, v], 'Shared with ' + v);
+  };
+  document.querySelectorAll('[data-ep-unshare]').forEach(b => b.onclick = () => saveEmails(emails.filter(e => e !== b.dataset.epUnshare), 'Removed ' + b.dataset.epUnshare));
+}
+async function saveEmails(list, msg) {
+  try { await setDoc(doc(fs, 'households/' + H.id), { emails: list }, { merge: true }); H.data.emails = list; EP().toast(msg); openShare(); EP().render(); }
+  catch { const err = $('shareErr'); if (err) { err.textContent = "That didn't save. Check your connection and try again."; err.hidden = false; } }
+}
+
+// ---------- setup checklist (brand-new budgets only) ----------
+let checklistClosing = false;
+window.EP_LEDGER_TOP = c => {
+  if (!META.setup || META.setup.checklist !== 'active') return '';
+  const S = EP().S, p = EP().period(); if (!p || p.archive || S.readOnly) return '';
+  const items = [
+    ['Add your income', c.incomePlanned > 0],
+    ['Plan every pound', c.incomePlanned > 0 && c.expPlanned > 0 && c.toBudget === 0],
+    ['Log your first spend', S.txns.length > 0 || S.debtTx.some(t => t.periodId === p.id)],
+  ];
+  const done = items.filter(x => x[1]).length;
+  if (done === items.length && !checklistClosing) {
+    checklistClosing = true;
+    setTimeout(() => { META.setup = { checklist: 'done' }; writeDoc(metaPath('setup'), META.setup).catch(() => {}); EP().toast("You're all set up"); EP().render(); }, 1800);
+  }
+  return `<div class="card checklist"><div class="ck-head"><strong>Get set up</strong><span class="muted">${done} of ${items.length}</span><button class="iconbtn" type="button" data-ep-cklose aria-label="Hide checklist">✕</button></div>
+    <ol>${items.map(([t, ok]) => `<li class="${ok ? 'ok' : ''}"><span class="ck" aria-hidden="true">${ok ? '✓' : ''}</span>${t}${ok ? '<span class="sr-only"> (done)</span>' : ''}</li>`).join('')}</ol></div>`;
+};
+document.addEventListener('click', e => {
+  if (!e.target.closest('[data-ep-cklose]')) return;
+  META.setup = { checklist: 'done' }; writeDoc(metaPath('setup'), META.setup).catch(() => {}); EP().render();
+});
+
+// ---------- page tips: a few short tips the first time each place is opened ----------
+const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+const q = sel => [...document.querySelectorAll(sel)].find(visible) || null;
+const TOUCH = matchMedia('(hover: none)').matches;
+const appOpen = () => !$('app').hidden && $('stateScreen').hidden;
+const drawerShown = () => visible($('drawer'));
+const tab = () => $('app').dataset.tab;
+const TOURS = [
+  ['edit', () => visible($('editForm')), [
+    ['#edBucket', 'Pick another bucket to move this line, say if a direct debit moves bank. Budgets you’ve already planned ahead move too.'],
+    ['#edDD', 'Tick direct debit and you can swipe this line as Paid from the budget, with or without a date.', el => el.closest('label') || el],
+    ['#edDue', 'Add a due date to see when it leaves. Weekends and bank holidays move to the next working day.'],
+  ]],
+  ['line', () => drawerShown() && visible($('txAmt')), [
+    ['#txAmt', 'Log spending here: the amount, where you spent it, then Add. Tap a shop to fill it in.', el => el.closest('form') || el],
+    ['#refundPill', 'Got money back? Switch on Refund first and it goes back into this line.'],
+    ['#moveBox summary', 'Short here but spare elsewhere? Move money shifts budget between lines, just for this month.'],
+    ['[data-editpage]', 'The pencil edits the name, plan, due date, bucket and direct debit.'],
+  ]],
+  ['reminders', () => !!q('[data-tour=reminders]'), [
+    ['[data-tour=reminders]', 'Birthdays, renewals and other once-a-year costs. Each one shows up in the budget it lands in, with a banner to add or skip it.'],
+  ]],
+  ['budget', () => appOpen() && !drawerShown() && (tab() === 'budget' || matchMedia('(min-width: 861px)').matches) && !!q('.row[data-line]'), [
+    ['.group.income .l-plan', TOUCH ? 'Start with your income. Press and hold the amount to type what’s coming in this month.' : 'Start with your income. Click the amount to type what’s coming in this month.'],
+    ['.group:not(.income) .row[data-line] .l-plan', (TOUCH ? 'Press and hold any amount to plan it, or tap a line to open it.' : 'Click any amount to plan it.') + ' Keep going until every pound has a job and the banner turns green.'],
+    [() => q('.row[data-canpay="1"]') || q('.group:not(.income) .row[data-line]'), null, null, 'swipe'],
+    ['#pTitleBtn', (TOUCH ? 'Tap' : 'Click') + ' the month to jump to any budget, past or future.'],
+  ]],
+  ['summary', () => appOpen() && !drawerShown() && visible($('side')) && !!q('.ring-wrap'), [
+    ['.ring-wrap', 'Where your income goes, split by bucket.'],
+    ['.seg[aria-label="Summary view"]', 'Switch between what’s planned, what’s been spent and what’s left.'],
+    ['.remcard', 'Yearly reminders keep birthdays, renewals and other once-a-year costs from catching you out.'],
+    ['.acct', 'Share the budget, download a backup or bring these tips back.'],
+  ]],
+  ['activity', () => appOpen() && tab() === 'activity' && !matchMedia('(min-width: 861px)').matches && !!q('.activity-card'), [
+    ['.activity-card', 'Everything logged in this budget, newest first. Add transaction logs against any line.'],
+  ]],
+  ['plan', () => appOpen() && !drawerShown() && visible($('planNext')), [
+    ['#planNext', 'Ready for next month? This copies this budget forward with due dates moved on. Change anything after.'],
+  ]],
+];
+let tourOn = false, tipsTimer = null;
+function startTips() {
+  new MutationObserver(scheduleTips).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'data-tab'] });
+  window.addEventListener('resize', scheduleTips);
+  scheduleTips();
+}
+function scheduleTips() { if (tourOn) return; clearTimeout(tipsTimer); tipsTimer = setTimeout(checkTips, 700); }
+function checkTips() {
+  if (tourOn || document.body.classList.contains('typing') || $('epModal')) return;
+  const ae = document.activeElement; if (ae && ae.id !== 'txAmt' && ae.matches('input:not([type=checkbox]):not([type=date]), textarea')) return;
+  for (const [key, when, steps] of TOURS) if (!META.tips[key] && when()) { runTour(key, steps); return; }
+}
+function markSeen(key) {
+  META.tips[key] = true;
+  if (UID) writeDoc(tipsPath(), { tips: { [key]: true } }, true).catch(() => {});
+}
+function resetTips() {
+  const off = Object.fromEntries(TOURS.map(([k]) => [k, false]));
+  META.tips = { ...off };
+  if (UID) writeDoc(tipsPath(), { tips: off }, true).catch(() => {});
+  EP().toast('Tips will show again as you go'); scheduleTips();
+}
+function swipeStep() {
+  const row = q('.row[data-canpay="1"]') || q('.group:not(.income) .row[data-line]'); if (!row) return null;
+  const paid = row.dataset.canpay === '1';
+  const text = TOUCH
+    ? (paid ? 'Swipe a line left to mark it Paid, or right to delete it.' : 'Swipe a line right to delete it. Direct debits also swipe left to mark them Paid.') + ' Press and hold a name to rename it.'
+    : 'Hover over a line for Delete and, on direct debits, Paid. Click a name to rename it.';
+  return { el: row, text, peek: TOUCH ? (paid ? 'swiped-paid' : 'swiped-del') : null };
+}
+function runTour(key, steps) {
+  const list = steps.map(([sel, text, pick, kind]) => {
+    if (kind === 'swipe') return swipeStep();
+    const el = typeof sel === 'function' ? sel() : q(sel); if (!el) return null;
+    return { el: pick ? pick(el) : el, text };
+  }).filter(Boolean);
+  if (!list.length) return;
+  tourOn = true;
+  if (document.activeElement) document.activeElement.blur();
+  document.body.insertAdjacentHTML('beforeend', `<div class="tour" id="tour"><div class="tour-hole" id="tourHole"></div>
+    <div class="tour-bubble" id="tourBubble" role="dialog" aria-live="polite"><p id="tourText"></p>
+    <div class="tour-foot"><button type="button" class="btn ghost" id="tourSkip">Skip</button><span id="tourCount"></span><button type="button" class="btn" id="tourNext">Next</button></div></div></div>`);
+  let i = 0, peekT = null;
+  const place = () => {
+    const st = list[i]; if (!st || !st.el.isConnected) return;
+    const r = st.el.getBoundingClientRect(), pad = 6, hole = $('tourHole'), bub = $('tourBubble');
+    Object.assign(hole.style, { left: r.left - pad + 'px', top: r.top - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
+    const bw = Math.min(340, innerWidth - 32); bub.style.width = bw + 'px';
+    const below = r.bottom + 14 + bub.offsetHeight < innerHeight - 8;
+    bub.style.top = (below ? r.bottom + 14 : Math.max(8, r.top - 14 - bub.offsetHeight)) + 'px';
+    bub.style.left = Math.min(Math.max(16, r.left + r.width / 2 - bw / 2), innerWidth - bw - 16) + 'px';
+  };
+  const show = () => {
+    const st = list[i];
+    st.el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    $('tourText').textContent = st.text;
+    $('tourCount').textContent = list.length > 1 ? (i + 1) + ' of ' + list.length : '';
+    $('tourNext').textContent = i === list.length - 1 ? 'Got it' : 'Next';
+    requestAnimationFrame(place); setTimeout(place, 120);
+    clearTimeout(peekT);
+    if (st.peek) { // slide the row open briefly so the swipe is seen, not just described
+      const row = st.el; peekT = setTimeout(() => { row.classList.add(st.peek); setTimeout(() => row.classList.remove(st.peek), 1100); }, 500);
+    }
+  };
+  const end = () => {
+    clearTimeout(peekT); list.forEach(st => st.el.classList && st.el.classList.remove('swiped-paid', 'swiped-del'));
+    removeEventListener('resize', place); removeEventListener('scroll', place, true); removeEventListener('keydown', onKey);
+    $('tour').remove(); tourOn = false; markSeen(key); scheduleTips();
+  };
+  const onKey = e => { if (e.key === 'Escape') end(); };
+  $('tourSkip').onclick = end;
+  $('tourNext').onclick = () => { if (i < list.length - 1) { i++; show(); } else end(); };
+  addEventListener('resize', place); addEventListener('scroll', place, true); addEventListener('keydown', onKey);
+  show();
+}
+
 // ---------- start ----------
 let booted = false;
 if (DEMO) {
-  H = { id: 'demo', data: {} }; booted = true;
+  H = { id: 'demo', data: {} }; booted = true; UID = 'demo';
   document.body.insertAdjacentHTML('afterbegin', '<div class="demo-bar">Demo: nothing is saved <a href="./">Leave</a></div>');
   EP().boot(makeDb(H.id));
+  startTips();
 } else onAuthStateChanged(auth, async user => {
   if (!user) { if (booted) location.reload(); else showSignIn(); return; }
   if (booted) return;
@@ -253,8 +484,10 @@ if (DEMO) {
     H = await findHousehold(user);
     try { localStorage.setItem('ep.household.' + user.uid, H.id); } catch {}
     booted = true;
+    await loadMeta(user.uid);
     document.querySelector('header.top').hidden = false;
     EP().boot(makeDb(H.id));
+    startTips();
   } catch (e) {
     screen(`<h2>Can't open your budget</h2><p>${e && e.code === 'permission-denied' ? 'This account does not have access yet.' : 'Check your connection, then reload the page.'}</p>
       <button class="btn ghost" type="button" data-ep-signout>Sign out</button>`);
