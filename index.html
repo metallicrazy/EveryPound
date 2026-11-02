@@ -234,6 +234,14 @@ button { cursor: pointer; }
 .debts { list-style: none; margin: 0; padding: 0; }
 .debts li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .debts li:last-child { border-bottom: 0; }
+.debts li { flex-wrap: wrap; }
+.limitbar { flex-basis: 100%; margin-top: 8px; }
+.balance + .limitbar { margin-top: 10px; padding: 0 2px; }
+.lb-track { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+.lb-track i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.limitbar.high .lb-track i { background: var(--bad); }
+.lb-text { display: flex; justify-content: space-between; gap: 10px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.limitbar.high .lb-text span:last-child { color: var(--bad); font-weight: 600; }
 .debts .owe { color: var(--bad); font-weight: 600; }
 .debts .clear { color: var(--accent); font-weight: 600; }
 .recent { list-style: none; margin: 0; padding: 0; }
@@ -717,6 +725,7 @@ a.btn { text-decoration: none; display: inline-block; }
         if (g.kind === 'debt' && l.debtId) {
           const d = S.debts[l.debtId];
           out.balanceSet = !!(d && Number.isFinite(d.opening));
+          out.limit = d && Number.isFinite(d.limit) && d.limit > 0 ? d.limit : null;
           out.startBal = debtBalance(l.debtId, null, p.start);
           out.balance = debtBalance(l.debtId, p.end, null);
           // Budgets that haven't started follow the 0% plan unless the payment was typed in by hand
@@ -812,6 +821,13 @@ a.btn { text-decoration: none; display: inline-block; }
     const n = Math.max(1, (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + (b.getDate() >= a.getDate() ? 1 : 0));
     const need = Math.ceil(owed / n);
     return { need, n, end: d.promoEnd, short: l.planned < need };
+  }
+  // Cards with a limit: how much of it is used and what's left to spend
+  function limitBar(l) {
+    if (!l.limit || !l.balanceSet) return '';
+    const used = Math.max(0, -l.balance), avail = l.limit - used, pct = Math.min(1, used / l.limit);
+    return `<div class="limitbar${pct >= 0.9 ? ' high' : ''}"><div class="lb-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct * 100)}" aria-label="Credit limit used"><i style="width:${(pct * 100).toFixed(1)}%"></i></div>
+      <div class="lb-text num"><span>${money(used)} used of ${money(l.limit)}</span><span>${avail >= 0 ? money(avail) + ' available' : money(-avail) + ' over limit'}</span></div></div>`;
   }
   function balanceLabel(l) {
     if (!l.debtId) return '';
@@ -918,7 +934,7 @@ a.btn { text-decoration: none; display: inline-block; }
     // debts shown in this budget
     const debtLines = c.groups.filter(g => g.kind === 'debt').flatMap(g => g.lines).filter(l => l.debtId);
     const debtsHtml = debtLines.length ? `<div class="card"><h3>Debts</h3><ul class="debts">${debtLines.map(l =>
-      `<li><span>${esc(l.name)}</span><span class="num ${l.balance < 0 ? 'owe' : 'clear'}">${!l.balanceSet ? '<span class="muted">Balance not set</span>' : l.balance === 0 ? 'Paid off' : money(l.balance)}</span></li>`).join('')}</ul></div>` : '';
+      `<li><span>${esc(l.name)}</span><span class="num ${l.balance < 0 ? 'owe' : 'clear'}">${!l.balanceSet ? '<span class="muted">Balance not set</span>' : l.balance === 0 ? 'Paid off' : money(l.balance)}</span>${limitBar(l)}</li>`).join('')}</ul></div>` : '';
     // latest activity across the budget
     const all = [...S.txns, ...S.debtTx.filter(t => t.periodId === p.id)];
     const recent = all.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || 0) - (a.created || 0));
@@ -1197,6 +1213,27 @@ a.btn { text-decoration: none; display: inline-block; }
         <p class="d-sub">Each one shows up in the budget it lands in, with a Review banner to add or skip it.</p></div>`;
       return;
     }
+    if (o.mode === 'newdebt') {
+      d.innerHTML = `<div class="d-head"><span class="chip">New debt</span><button class="iconbtn" data-close aria-label="Close"><span class="ico-x">${ICON_X}</span><span class="ico-back">${ICON_BACK}</span></button></div>
+        <div class="d-body"><h2 id="dTitle">Add a card or loan</h2>
+          <form class="panel" id="newDebtForm" novalidate><div class="fields">
+            <div class="field wide"><label for="ndName">Name</label><input id="ndName" autocomplete="off" placeholder="e.g. Barclaycard"></div>
+            <div class="field wide"><label for="ndOpen">Balance owed now (£)</label><input id="ndOpen" class="money" placeholder="£0.00">
+              <small>What you owe today, before any payments you log here. It carries into every budget.</small></div>
+            <div class="field wide"><label for="ndLimit">Credit limit (£)</label><input id="ndLimit" class="money" placeholder="Cards only, leave blank for loans"></div>
+            <div class="field"><label for="ndApr">Interest rate (%)</label><input id="ndApr" inputmode="decimal" placeholder="0"></div>
+            <div class="field"><label for="ndPromo">0% offer ends</label><input id="ndPromo" type="date"></div>
+            <div class="field"><label for="ndPlan">Payment this month (£)</label><input id="ndPlan" class="money" placeholder="£0.00"></div>
+            <div class="field"><label for="ndDue">Due date</label><input id="ndDue" type="date"></div>
+            <label class="check field wide"><input type="checkbox" id="ndAuto" checked> In budgets that haven't started, set the payment to what's needed to clear it</label>
+            <label class="check field wide"><input type="checkbox" id="ndDD"> Direct debit: swipe to mark it paid. If it’s due on a weekend or bank holiday, it leaves the next working day.</label>
+          </div>
+          <p class="err" id="ndErr" hidden></p>
+          <div class="btnrow" style="margin-top:12px"><button class="btn" type="submit">Add debt</button></div></form></div>`;
+      d.querySelectorAll('input.money').forEach(moneyInput);
+      setTimeout(() => { const el = $('ndName'); el && el.focus(); }, 30);
+      return;
+    }
     if (o.mode === 'group') {
       const g = o.groupId ? (p.groups || []).find(x => x.id === o.groupId) : null;
       if (o.groupId && !g) { closeDrawer(); return; }
@@ -1230,7 +1267,7 @@ a.btn { text-decoration: none; display: inline-block; }
     const leftWord = kind === 'income' ? 'still to come' : kind === 'debt' ? 'left to pay' : over ? 'over' : 'left';
     const doneWord = kind === 'income' ? 'received' : kind === 'debt' ? 'paid' : 'spent';
     const bal = kind === 'debt' && l.debtId ? `<div class="balance"><div><span>Balance${l.balanceSet ? '' : ' (starting balance not set)'}</span><br><b class="num ${l.balance < 0 ? 'owe' : 'clear'}">${l.balance === 0 && l.balanceSet ? 'Paid off' : money(l.balance)}</b></div>
-        <span class="num" style="text-align:right">${money(l.startBal)}<br>at ${fmtDate(p.start)}</span></div>` : '';
+        <span class="num" style="text-align:right">${money(l.startBal)}<br>at ${fmtDate(p.start)}</span></div>${limitBar(l)}` : '';
     const remLabel = kind === 'debt' ? 'To pay' : over ? 'Over' : 'Remaining';
     void leftWord;
     const stats = `<div class="d-top"><h2 id="dTitle">${esc(l.name)}</h2>
@@ -1256,6 +1293,7 @@ a.btn { text-decoration: none; display: inline-block; }
             ${bucketPicker(p, f.g)}
             ${debt ? `<div class="field wide"><label for="edOpen">Starting balance owed (£)</label><input id="edOpen" class="money" placeholder="£0.00" value="${Number.isFinite(debt.opening) ? (Math.abs(debt.opening) / 100).toFixed(2) : ''}">
               <small>What you owed before tracking any payments here. It carries into every budget.</small></div>
+            <div class="field wide"><label for="edLimit">Credit limit (£)</label><input id="edLimit" class="money" placeholder="Cards only, leave blank for loans" value="${Number.isFinite(debt.limit) && debt.limit > 0 ? (debt.limit / 100).toFixed(2) : ''}"></div>
             <div class="field"><label for="edApr">Interest rate (%)</label><input id="edApr" inputmode="decimal" placeholder="0" value="${Number.isFinite(debt.apr) ? debt.apr : ''}"></div>
             <div class="field"><label for="edPromo">0% offer ends</label><input id="edPromo" type="date" value="${esc(debt.promoEnd || '')}"></div>
             <label class="check field wide"><input type="checkbox" id="edAuto"${raw.manual ? '' : ' checked'}> In budgets that haven't started, set the payment to what's needed to clear it</label>` : ''}
@@ -1712,7 +1750,7 @@ a.btn { text-decoration: none; display: inline-block; }
     if (t.hasAttribute('data-editback')) { closeEditPage(); return; }
     if (t.dataset.tab) { setTab(t.dataset.tab); return; }
     if (t.hasAttribute('data-close')) { closeDrawer(); return; }
-    if (t.dataset.addline) { startAdd(t.dataset.addline); return; }
+    if (t.dataset.addline) { const ag = (period().groups || []).find(x => x.id === t.dataset.addline); if (ag && ag.kind === 'debt') openDrawer({ mode: 'newdebt', groupId: ag.id }); else startAdd(t.dataset.addline); return; }
     if (t.dataset.deltx) { deleteTx(t.dataset.deltx); return; }
     if (t.dataset.movedir) {
       t.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b === t));
@@ -1815,6 +1853,32 @@ a.btn { text-decoration: none; display: inline-block; }
       toast('Saved'); closeEditPage();
       return;
     }
+    if (e.target.id === 'newDebtForm') {
+      const p = period(), err = $('ndErr'); const bad = m => { err.textContent = m; err.hidden = false; };
+      const name = $('ndName').value.trim(); if (!name) return bad('Give the card or loan a name.');
+      const rawOpen = $('ndOpen').value.trim(), owed = rawOpen === '' ? null : toPence(rawOpen);
+      if (owed !== null && !Number.isFinite(owed)) return bad('Enter the balance owed, like 1000.');
+      const rawLim = $('ndLimit').value.trim(), limit = rawLim === '' ? null : toPence(rawLim);
+      if (limit !== null && !(Number.isFinite(limit) && limit > 0)) return bad('Enter the credit limit, like 3000, or leave it blank for a loan.');
+      const aprRaw = $('ndApr').value.trim(), apr = aprRaw === '' ? null : parseFloat(aprRaw.replace('%', ''));
+      if (apr !== null && !(Number.isFinite(apr) && apr >= 0)) return bad('Enter the interest rate as a number, like 0 or 24.9.');
+      const planned = toPence($('ndPlan').value || '0'); if (!Number.isFinite(planned) || planned < 0) return bad('Enter this month\'s payment, like 50, or leave it at £0.');
+      const promoEnd = $('ndPromo').value || null, due = $('ndDue').value, dd = $('ndDD').checked, auto = $('ndAuto').checked;
+      const groups = structuredClone(p.groups || []), g = groups.find(x => x.id === S.open.groupId); if (!g) { closeDrawer(); return; }
+      // a card that was in an earlier budget but not this one comes back with its history, not as a duplicate
+      const here = new Set(groups.flatMap(x => (x.lines || []).map(l => l.debtId)).filter(Boolean));
+      const existing = Object.values(S.debts).find(x => x.name.trim().toLowerCase() === name.toLowerCase() && !here.has(x.id));
+      const debtId = existing ? existing.id : 'd-' + uid();
+      const body = { name, opening: owed === null ? (existing && Number.isFinite(existing.opening) ? existing.opening : null) : -Math.abs(owed), apr, promoEnd, limit };
+      try { await tracked(() => S.db.doc('debts/' + debtId).set(body)); S.debts[debtId] = { id: debtId, ...body }; } catch (er) { return bad(errText(er)); }
+      const line = { id: 'l-' + uid(), name, planned, debtId }; if (due) line.due = due; if (dd) line.dd = true; if (!auto) line.manual = true;
+      g.lines = g.lines || []; g.lines.push(line);
+      if (p.skipDebts) p.skipDebts = p.skipDebts.filter(x => x !== debtId);
+      await saveGroups(p, groups);
+      toast(name + ' added');
+      S.open = { mode: 'line', lineId: line.id }; renderDrawer(true); // straight onto its page
+      return;
+    }
     if (e.target.id === 'groupForm') {
       const name = $('grName').value.trim(), err = $('grErr'), p = period();
       if (!name) { err.textContent = 'Give the bucket a name.'; err.hidden = false; return; }
@@ -1871,7 +1935,9 @@ a.btn { text-decoration: none; display: inline-block; }
         const aprRaw = $('edApr').value.trim(), apr = aprRaw === '' ? null : parseFloat(aprRaw.replace('%', ''));
         if (apr !== null && !(Number.isFinite(apr) && apr >= 0)) { err.textContent = 'Enter the interest rate as a number, like 0 or 24.9.'; err.hidden = false; return; }
         const promoEnd = $('edPromo').value || null;
-        const body = { name, opening, apr, promoEnd };
+        const limRaw = $('edLimit') ? $('edLimit').value.trim() : '', limit = limRaw === '' ? null : toPence(limRaw);
+        if (limit !== null && !(Number.isFinite(limit) && limit > 0)) { err.textContent = 'Enter the credit limit, like 3000, or leave it blank for a loan.'; err.hidden = false; return; }
+        const body = { name, opening, apr, promoEnd, limit };
         try { await tracked(() => S.db.doc('debts/' + debtId).set(body)); S.debts[debtId] = { id: debtId, ...body }; } catch (er) { toast(errText(er)); return; }
       }
       S.open.edit = null;
