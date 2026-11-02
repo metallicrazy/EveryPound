@@ -150,7 +150,8 @@ window.EP_EMPTY = () => {
       const n = Object.keys(data.budgets || {}).length;
       msg.textContent = 'Importing ' + n + ' budgets…';
       const total = await importBackup(data, (d, t) => { msg.textContent = 'Importing… ' + Math.round(d / t * 100) + '%'; });
-      msg.textContent = 'Done: ' + n + ' budgets, ' + total + ' records.';
+      msg.textContent = 'Done: ' + n + ' budgets, ' + total + ' records. Opening…';
+      setTimeout(() => location.reload(), 1200);
     } catch (e) { msg.style.color = 'var(--bad)'; msg.textContent = e && e.message && !e.code ? e.message : "Import didn't finish. Check your connection and try again."; }
   };
 };
