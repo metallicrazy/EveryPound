@@ -956,15 +956,31 @@ a.btn { text-decoration: none; display: inline-block; }
   // ---------- shop suggestions ----------
   // Your most-used shops with the shorthands you actually type. History is read once to learn
   // which shops go with which line, plus any other names you've used at least twice.
+  // [name, how it's typed, shorthands, types]
   const SHOPS = [
-    ['Asda', /\basda/, []], ['Tesco', /tesco/, []], ["McDonald's", /mcdonald|mcds|\bmcd\b|maccies/, ['mcds', 'mcd', 'maccies', 'mcdonalds']],
-    ['Lidl', /lidl/, []], ['Pets at Home', /\bpah\b|pets ?at ?home/, ['pah']], ['Amazon', /amazon|amzn/, ['amz']],
-    ['KFC', /\bkfc/, []], ['Stephens', /stephens/, []], ['TfL', /\btfl\b/, []], ['Caffè Nero', /\bnero\b/, ['nero', 'caffe nero', 'cafe nero']],
-    ['Co-op', /\bco-?op\b/, ['coop']], ['B&Q', /\bb ?(&|and) ?q\b/, ['bq', 'b and q']], ['B&M', /\bb ?(&|and) ?m\b/, ['bm', 'b and m']],
-    ["Sainsbury's", /sainsbury/, ['sainsburys', 'sains']], ['Just Eat', /just ?eat/, ['je', 'justeat']], ['Starbucks', /starbucks/, ['sbux']],
-    ['WHSmith', /w ?h ?smith/, ['wh smith', 'smiths']], ['Homebase', /homebase/, []], ['Aldi', /aldi/, []], ['Primark', /primark/, []],
-    ['Costa', /costa/, []], ['7 Kings', /7 ?kings|seven ?kings/, ['seven kings']], ['Muscle Food', /muscle ?food/, ['musclefood']], ['IKEA', /ikea/, []],
+    ['Asda', /\basda/, [], ['grocery', 'fuel']], ['Tesco', /tesco/, [], ['grocery', 'fuel']], ["McDonald's", /mcdonald|mcds|\bmcd\b|maccies/, ['mcds', 'mcd', 'maccies', 'mcdonalds'], ['eatout']],
+    ['Lidl', /lidl/, [], ['grocery']], ['Pets at Home', /\bpah\b|pets ?at ?home/, ['pah'], ['pets']], ['Amazon', /amazon|amzn/, ['amz'], ['general']],
+    ['KFC', /\bkfc/, [], ['eatout']], ['Stephens', /stephens/, [], ['eatout']], ['TfL', /\btfl\b/, [], ['travel']], ['Caffè Nero', /\bnero\b/, ['nero', 'caffe nero', 'cafe nero'], ['eatout']],
+    ['Co-op', /\bco-?op\b/, ['coop'], ['grocery', 'fuel']], ['B&Q', /\bb ?(&|and) ?q\b/, ['bq', 'b and q'], ['home']], ['B&M', /\bb ?(&|and) ?m\b/, ['bm', 'b and m'], ['general', 'home']],
+    ["Sainsbury's", /sainsbury/, ['sainsburys', 'sains'], ['grocery', 'fuel']], ['Just Eat', /just ?eat/, ['je', 'justeat'], ['eatout']], ['Starbucks', /starbucks/, ['sbux'], ['eatout']],
+    ['WHSmith', /w ?h ?smith/, ['wh smith', 'smiths'], ['general']], ['Homebase', /homebase/, [], ['home']], ['Aldi', /aldi/, [], ['grocery']], ['Primark', /primark/, [], ['general']],
+    ['Costa', /costa/, [], ['eatout']], ['7 Kings', /7 ?kings|seven ?kings/, ['seven kings'], ['eatout']], ['Muscle Food', /muscle ?food/, ['musclefood'], ['grocery']], ['IKEA', /ikea/, [], ['home']],
+    ['Morrisons', /morrison/, [], ['grocery', 'fuel']], ['Iceland', /iceland/, [], ['grocery']], ['Farmfoods', /farm ?foods/, [], ['grocery']], ['M&S', /\bm ?(&|and) ?s\b|marks/, ['ms', 'marks'], ['grocery']],
+    ['Waitrose', /waitrose/, [], ['grocery']], ['Greggs', /greggs/, [], ['eatout']], ['Shell', /\bshell\b/, [], ['fuel']], ['BP', /\bbp\b/, [], ['fuel']],
+    ['Esso', /\besso\b/, [], ['fuel']], ['Texaco', /texaco/, [], ['fuel']], ['Deliveroo', /deliveroo/, [], ['eatout']], ['Uber Eats', /uber ?eats/, ['ubereats'], ['eatout']],
   ];
+  // Lines with an obvious purpose only suggest shops of a matching type (no KFC under Petrol).
+  // Any other line (Fun money, Expenses...) suggests whatever you've used on it.
+  const LINE_TYPES = [
+    [/petrol|fuel|diesel/i, ['fuel']],
+    [/food ?shop|grocer|supermarket|^food$/i, ['grocery']],
+    [/takeaway|take ?away|eating ?out|restaurant|coffee|lunch/i, ['eatout']],
+    [/\bpets?\b|vet|\bdogs?\b|\bcats?\b/i, ['pets', 'grocery']],
+    [/\bdiy\b|garden|home ?improve|house/i, ['home']],
+    [/travel|train|\btfl\b|bus\b/i, ['travel']],
+  ];
+  const lineTypes = name => { const hit = LINE_TYPES.find(([re]) => re.test(name || '')); return hit ? hit[1] : null; };
+  const shopFits = (shopName, types) => { const sh = SHOPS.find(x => x[0] === shopName); return !!sh && sh[3].some(t => types.includes(t)); };
   const squash = v => String(v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
   const canonShop = payee => { const p = String(payee).toLowerCase(); const h = SHOPS.find(x => x[1].test(p)); return h ? h[0] : null; };
   let shopIdx = null, shopIdxKey = '';
@@ -1004,8 +1020,11 @@ a.btn { text-decoration: none; display: inline-block; }
         return squash(n).startsWith(sq) || n.split(/[\s&'-]+/).some(w => squash(w).startsWith(sq)) || (shop && shop[2].some(a => squash(a).startsWith(sq)));
       });
       if (names.some(n => n === String(q).trim())) return []; // already filled in exactly
-    } else names = names.filter(n => (line.get(n) || 0) > 0);
-    return names.sort((a, b) => score(b) - score(a)).slice(0, 4);
+    } else {
+      const types = lineTypes(lineName);
+      names = types ? names.filter(n => shopFits(n, types)) : names.filter(n => (line.get(n) || 0) > 0);
+    }
+    return names.sort((a, b) => score(b) - score(a)).slice(0, 6);
   }
   function renderShopChips() {
     const box = $('shopChips'), inp = $('txPayee'); if (!box || !inp || !S.open) return;
@@ -1013,6 +1032,9 @@ a.btn { text-decoration: none; display: inline-block; }
     const f = lineId && findLine(p, lineId); if (f && f.g.kind === 'debt') { box.innerHTML = ''; return; }
     const list = shopSuggestions(f ? f.l.name : '', inp.value);
     box.innerHTML = list.map(n => `<button type="button" class="shopchip" data-shop="${esc(n)}">${esc(n)}</button>`).join('');
+    const fit = () => { const kids = box.children; if (!kids.length || !box.offsetParent) return; const top = kids[0].offsetTop;
+      while (kids.length > 1 && kids[kids.length - 1].offsetTop !== top) box.removeChild(kids[kids.length - 1]); };
+    fit(); requestAnimationFrame(fit);
   }
   function txFormHTML(kind, withPicker) {
     const p = period();
