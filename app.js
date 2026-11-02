@@ -431,50 +431,63 @@ function swipeStep() {
     : 'Hover over a line for Delete and, on direct debits, Paid. Click a name to rename it.';
   return { el: row, text, peek: TOUCH ? (paid ? 'swiped-paid' : 'swiped-del') : null };
 }
+// The spotlit element stays usable (try it, then Next); everything around it is dimmed and blocked.
 function runTour(key, steps) {
-  const list = steps.map(([sel, text, pick, kind]) => {
+  const resolve = ([sel, text, pick, kind]) => {
     if (kind === 'swipe') return swipeStep();
     const el = typeof sel === 'function' ? sel() : q(sel); if (!el) return null;
     return { el: pick ? pick(el) : el, text };
-  }).filter(Boolean);
-  if (!list.length) return;
+  };
+  if (!steps.some(resolve)) return;
   tourOn = true;
   if (document.activeElement) document.activeElement.blur();
   document.body.insertAdjacentHTML('beforeend', `<div class="tour" id="tour"><div class="tour-hole" id="tourHole"></div>
+    <div class="tour-block" data-b="t"></div><div class="tour-block" data-b="b"></div><div class="tour-block" data-b="l"></div><div class="tour-block" data-b="r"></div>
     <div class="tour-bubble" id="tourBubble" role="dialog" aria-live="polite"><p id="tourText"></p>
     <div class="tour-foot"><button type="button" class="btn ghost" id="tourSkip">Skip</button><span id="tourCount"></span><button type="button" class="btn" id="tourNext">Next</button></div></div></div>`);
-  let i = 0, peekT = null;
+  let i = -1, st = null, peekT = null, lastRect = null;
   const place = () => {
-    const st = list[i]; if (!st || !st.el.isConnected) return;
-    const r = st.el.getBoundingClientRect(), pad = 6, hole = $('tourHole'), bub = $('tourBubble');
-    Object.assign(hole.style, { left: r.left - pad + 'px', top: r.top - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
-    const bw = Math.min(340, innerWidth - 32); bub.style.width = bw + 'px';
+    // follow the element if the app re-draws it (e.g. after you change an amount)
+    if (st && !st.el.isConnected) { const again = resolve(steps[i]); if (again) st.el = again.el; }
+    if (!st || !st.el.isConnected) return;
+    const r = st.el.getBoundingClientRect(), pad = 6;
+    const h = { l: r.left - pad, t: r.top - pad, w: r.width + pad * 2, h: r.height + pad * 2 }; lastRect = h;
+    Object.assign($('tourHole').style, { left: h.l + 'px', top: h.t + 'px', width: h.w + 'px', height: h.h + 'px' });
+    const set = (k, o) => Object.assign(document.querySelector(`.tour-block[data-b="${k}"]`).style, o);
+    set('t', { left: 0, top: 0, width: '100%', height: Math.max(0, h.t) + 'px' });
+    set('b', { left: 0, top: h.t + h.h + 'px', width: '100%', bottom: 0 });
+    set('l', { left: 0, top: h.t + 'px', width: Math.max(0, h.l) + 'px', height: h.h + 'px' });
+    set('r', { left: h.l + h.w + 'px', top: h.t + 'px', right: 0, height: h.h + 'px' });
+    const bub = $('tourBubble'), bw = Math.min(340, innerWidth - 32); bub.style.width = bw + 'px';
     const below = r.bottom + 14 + bub.offsetHeight < innerHeight - 8;
     bub.style.top = (below ? r.bottom + 14 : Math.max(8, r.top - 14 - bub.offsetHeight)) + 'px';
     bub.style.left = Math.min(Math.max(16, r.left + r.width / 2 - bw / 2), innerWidth - bw - 16) + 'px';
   };
-  const show = () => {
-    const st = list[i];
+  const go = () => {
+    // next step whose target is on screen right now (something you did may have changed the page)
+    while (++i < steps.length) { st = resolve(steps[i]); if (st) break; }
+    if (i >= steps.length) { end(); return; }
     st.el.scrollIntoView({ block: 'center', behavior: 'instant' });
     $('tourText').textContent = st.text;
-    $('tourCount').textContent = list.length > 1 ? (i + 1) + ' of ' + list.length : '';
-    $('tourNext').textContent = i === list.length - 1 ? 'Got it' : 'Next';
+    $('tourCount').textContent = steps.length > 1 ? (i + 1) + ' of ' + steps.length : '';
+    $('tourNext').textContent = steps.slice(i + 1).some(resolve) ? 'Next' : 'Got it';
     requestAnimationFrame(place); setTimeout(place, 120);
     clearTimeout(peekT);
     if (st.peek) { // slide the row open briefly so the swipe is seen, not just described
       const row = st.el; peekT = setTimeout(() => { row.classList.add(st.peek); setTimeout(() => row.classList.remove(st.peek), 1100); }, 500);
     }
   };
+  const tick = setInterval(place, 250); // keeps the spotlight on the element while you use it
   const end = () => {
-    clearTimeout(peekT); list.forEach(st => st.el.classList && st.el.classList.remove('swiped-paid', 'swiped-del'));
+    clearTimeout(peekT); clearInterval(tick);
     removeEventListener('resize', place); removeEventListener('scroll', place, true); removeEventListener('keydown', onKey);
-    $('tour').remove(); tourOn = false; markSeen(key); scheduleTips();
+    const t = $('tour'); if (t) t.remove(); tourOn = false; markSeen(key); scheduleTips();
   };
-  const onKey = e => { if (e.key === 'Escape') end(); };
+  const onKey = e => { if (e.key === 'Escape' && !document.body.classList.contains('typing') && !(document.activeElement && document.activeElement.matches('input'))) end(); };
   $('tourSkip').onclick = end;
-  $('tourNext').onclick = () => { if (i < list.length - 1) { i++; show(); } else end(); };
+  $('tourNext').onclick = () => { if (document.activeElement && document.activeElement.matches('input')) document.activeElement.blur(); go(); };
   addEventListener('resize', place); addEventListener('scroll', place, true); addEventListener('keydown', onKey);
-  show();
+  go();
 }
 
 // ---------- start ----------
