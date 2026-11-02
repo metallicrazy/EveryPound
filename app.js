@@ -371,7 +371,7 @@ const TOURS = [
   ['edit', () => visible($('editForm')), [
     ['#edBucket', 'Pick another bucket to move this line, say if a direct debit moves bank. Budgets you’ve already planned ahead move too.'],
     ['#edDD', 'Tick direct debit and you can swipe this line as Paid from the budget, with or without a date.', el => el.closest('label') || el],
-    ['#edDue', 'Add a due date to see when it leaves. Weekends and bank holidays move to the next working day.'],
+    ['#edDue', 'Add a due date to see when it leaves. For direct debits due on a weekend or bank holiday, it shows the next working day instead.'],
   ]],
   ['line', () => drawerShown() && visible($('txAmt')), [
     ['#txAmt', 'Log spending here: the amount, where you spent it, then Add. Tap a shop to fill it in.', el => el.closest('form') || el],

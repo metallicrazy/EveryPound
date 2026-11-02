@@ -1259,7 +1259,7 @@ a.btn { text-decoration: none; display: inline-block; }
             <div class="field"><label for="edApr">Interest rate (%)</label><input id="edApr" inputmode="decimal" placeholder="0" value="${Number.isFinite(debt.apr) ? debt.apr : ''}"></div>
             <div class="field"><label for="edPromo">0% offer ends</label><input id="edPromo" type="date" value="${esc(debt.promoEnd || '')}"></div>
             <label class="check field wide"><input type="checkbox" id="edAuto"${raw.manual ? '' : ' checked'}> In budgets that haven't started, set the payment to what's needed to clear it</label>` : ''}
-            <label class="check field wide"><input type="checkbox" id="edDD"${raw.dd ? ' checked' : ''}> Direct debit: swipe to mark paid (a due date moves to the next working day)</label>
+            <label class="check field wide"><input type="checkbox" id="edDD"${raw.dd ? ' checked' : ''}> Direct debit: swipe to mark it paid. If it’s due on a weekend or bank holiday, it leaves the next working day.</label>
           </div>
           <p class="err" id="edErr" hidden></p>
           <div class="btnrow" style="margin-top:12px"><button class="btn danger-ghost" type="button" data-del="${esc(raw.id)}">Delete item</button><button class="btn" type="submit">Save changes</button></div>
