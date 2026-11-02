@@ -15,6 +15,19 @@ try { fs = initializeFirestore(app, { localCache: persistentLocalCache({ tabMana
 catch { fs = initializeFirestore(app, {}); } // private browsing etc: no offline cache
 
 const EP = () => window.EP;
+// Demo mode (?demo): no sign-in, starts empty, everything lives in memory and vanishes on reload
+const DEMO = new URLSearchParams(location.search).has('demo');
+const mem = { docs: {}, subs: [] };
+const clone = v => v === undefined ? v : JSON.parse(JSON.stringify(v));
+const isMap = v => v && typeof v === 'object' && !Array.isArray(v);
+const mergeDeep = (a, b) => { for (const [k, v] of Object.entries(b)) { if (isMap(v) && isMap(a[k])) mergeDeep(a[k], v); else a[k] = clone(v); } return a; };
+const memCol = col => Object.keys(mem.docs).filter(k => k.startsWith(col + '/') && !k.slice(col.length + 1).includes('/'))
+  .map(k => ({ id: k.slice(col.length + 1), data: () => clone(mem.docs[k]) }));
+const memFire = () => setTimeout(() => mem.subs.forEach(([col, cb]) => cb({ docs: memCol(col), metadata: { fromCache: false } })));
+const memSet = (path, body, merge) => { mem.docs[path] = merge ? mergeDeep(mem.docs[path] || {}, body) : clone(body); memFire(); };
+// The few raw reads and writes outside the adapter go through these, so demo mode never touches Firestore
+const writeDoc = async (path, body) => DEMO ? memSet(path, body) : setDoc(doc(fs, path), body);
+const readCol = async path => DEMO ? memCol(path) : (await getDocs(collection(fs, path))).docs;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const G_ICON = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.6 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>';
@@ -44,7 +57,7 @@ function showSignIn(msg) {
 const niceAuthError = e => e && e.code === 'auth/network-request-failed' ? "Couldn't reach Google. Check your connection and try again."
   : e && e.code === 'auth/unauthorized-domain' ? 'This web address is not allowed to sign in yet.'
   : "Sign-in didn't work. Try again.";
-getRedirectResult(auth).catch(e => showSignIn(niceAuthError(e)));
+if (!DEMO) getRedirectResult(auth).catch(e => showSignIn(niceAuthError(e)));
 
 // ---------- household ----------
 let H = null; // { id, data }
@@ -74,6 +87,19 @@ async function findHousehold(user) {
 // ---------- db adapter (same shape the artifact build used) ----------
 function makeDb(hid) {
   const base = 'households/' + hid + '/';
+  if (DEMO) return {
+    collection(path) {
+      const col = base + path;
+      return {
+        onSnapshot: cb => { mem.subs.push([col, cb]); setTimeout(() => cb({ docs: memCol(col), metadata: { fromCache: false } })); return () => {}; },
+        add: async body => { const id = Math.random().toString(36).slice(2, 12); memSet(col + '/' + id, body); return { id, delete: async () => { delete mem.docs[col + '/' + id]; memFire(); } }; },
+      };
+    },
+    doc(path) {
+      const p = base + path;
+      return { set: async b => memSet(p, b), update: async b => memSet(p, b, true), delete: async () => { delete mem.docs[p]; memFire(); } };
+    },
+  };
   return {
     collection(path) {
       const ref = collection(fs, base + path);
@@ -98,15 +124,11 @@ const COLS = ['debts', 'debtTx', 'reminders', 'remState'];
 async function exportBackup() {
   const base = 'households/' + H.id + '/';
   const out = { app: 'EveryPound', version: 1, exported: new Date().toISOString(), budgets: {} };
-  const budgets = await getDocs(collection(fs, base + 'budgets'));
-  for (const b of budgets.docs) {
-    const tx = await getDocs(collection(fs, base + 'budgets/' + b.id + '/txns'));
-    out.budgets[b.id] = { ...b.data(), txns: Object.fromEntries(tx.docs.map(t => [t.id, t.data()])) };
+  for (const b of await readCol(base + 'budgets')) {
+    const tx = await readCol(base + 'budgets/' + b.id + '/txns');
+    out.budgets[b.id] = { ...b.data(), txns: Object.fromEntries(tx.map(t => [t.id, t.data()])) };
   }
-  for (const c of COLS) {
-    const snap = await getDocs(collection(fs, base + c));
-    out[c] = Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
-  }
+  for (const c of COLS) out[c] = Object.fromEntries((await readCol(base + c)).map(d => [d.id, d.data()]));
   return out;
 }
 function download(name, text) {
@@ -128,6 +150,7 @@ async function importBackup(data, progress) {
     for (const [tid, t] of Object.entries(txns || {})) writes.push([base + 'budgets/' + id + '/txns/' + tid, t]);
   }
   for (const c of COLS) for (const [id, d] of Object.entries(data[c] || {})) writes.push([base + c + '/' + id, d]);
+  if (DEMO) { writes.forEach(([path, body]) => memSet(path, body)); return writes.length; }
   for (let i = 0; i < writes.length; i += 400) {
     const batch = writeBatch(fs);
     for (const [path, body] of writes.slice(i, i + 400)) batch.set(doc(fs, path), body);
@@ -137,7 +160,6 @@ async function importBackup(data, progress) {
   return writes.length;
 }
 
-// Empty household: offer to bring a backup across
 // ---------- first run: start fresh, or bring a backup across ----------
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -179,7 +201,7 @@ window.EP_EMPTY = () => {
   $('startBtn').onclick = async () => {
     const v = $('startDate').value, msg = $('importMsg'); if (!v) { $('startDate').focus(); return; }
     const per = periodFrom(v); $('startBtn').disabled = true; msg.style.color = ''; msg.textContent = 'Setting up…';
-    try { await setDoc(doc(fs, 'households/' + H.id + '/budgets/' + per.id), starterDoc(per)); document.querySelector('header.top').hidden = false; }
+    try { await writeDoc('households/' + H.id + '/budgets/' + per.id, starterDoc(per)); document.querySelector('header.top').hidden = false; }
     catch { $('startBtn').disabled = false; msg.style.color = 'var(--bad)'; msg.textContent = "That didn't save. Check your connection and try again."; }
   };
   $('importFile').onchange = async ev => {
@@ -191,13 +213,15 @@ window.EP_EMPTY = () => {
       msg.textContent = 'Importing ' + n + ' budgets…';
       const total = await importBackup(data, (d, t) => { msg.textContent = 'Importing… ' + Math.round(d / t * 100) + '%'; });
       msg.textContent = 'Done: ' + n + ' budgets, ' + total + ' records. Opening…';
-      setTimeout(() => location.reload(), 1200);
+      if (DEMO) document.querySelector('header.top').hidden = false; else setTimeout(() => location.reload(), 1200);
     } catch (e) { msg.style.color = 'var(--bad)'; msg.textContent = e && e.message && !e.code ? e.message : "Import didn't finish. Check your connection and try again."; }
   };
 };
 
 // ---------- account card (Summary) ----------
 window.EP_ACCOUNT = () => {
+  if (DEMO) return `<div class="card acct"><div class="who"><span class="av">D</span><div><strong>Demo mode</strong><span>Nothing here is saved. Reload to start again.</span></div></div>
+    <div class="btnrow"><a class="btn ghost" href="./">Leave demo</a></div></div>`;
   const u = auth.currentUser; if (!u) return '';
   const pic = u.photoURL ? `<img src="${esc(u.photoURL)}" alt="" referrerpolicy="no-referrer">` : `<span class="av">${esc((u.displayName || u.email || '?')[0].toUpperCase())}</span>`;
   return `<div class="card acct"><div class="who">${pic}<div><strong>${esc(u.displayName || 'Signed in')}</strong><span>${esc(u.email)}</span></div></div>
@@ -217,10 +241,14 @@ document.addEventListener('click', async e => {
 
 // ---------- start ----------
 let booted = false;
-onAuthStateChanged(auth, async user => {
+if (DEMO) {
+  H = { id: 'demo', data: {} }; booted = true;
+  document.body.insertAdjacentHTML('afterbegin', '<div class="demo-bar">Demo: nothing is saved <a href="./">Leave</a></div>');
+  EP().boot(makeDb(H.id));
+} else onAuthStateChanged(auth, async user => {
   if (!user) { if (booted) location.reload(); else showSignIn(); return; }
   if (booted) return;
-  screen('<h2>Loading your budget</h2><p>Fetching your groups and transactions.</p>');
+  screen('<h2>Loading your budget</h2><p>Fetching your buckets and transactions.</p>');
   try {
     H = await findHousehold(user);
     try { localStorage.setItem('ep.household.' + user.uid, H.id); } catch {}
