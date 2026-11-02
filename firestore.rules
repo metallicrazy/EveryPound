@@ -1,0 +1,28 @@
+rules_version = '2';
+// EveryPound: each household's budget is readable and writable only by the Google accounts listed in it.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function myEmail() { return request.auth.token.email; }
+    function isMember(hid) {
+      return myEmail() in get(/databases/$(database)/documents/households/$(hid)).data.emails;
+    }
+
+    match /households/{hid} {
+      allow read: if signedIn() && myEmail() in resource.data.emails;
+      // anyone signed in can start their own household, listing only themselves
+      allow create: if signedIn()
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.emails == [myEmail()];
+      // only the owner can change who is in it, and ownership can't move
+      allow update: if signedIn()
+        && resource.data.owner == request.auth.uid
+        && request.resource.data.owner == resource.data.owner;
+      allow delete: if false;
+
+      match /{rest=**} {
+        allow read, write: if signedIn() && isMember(hid);
+      }
+    }
+  }
+}
