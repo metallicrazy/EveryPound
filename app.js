@@ -398,7 +398,7 @@ const TOURS = [
     ['.activity-card', 'Everything logged in this budget, newest first. Add transaction logs against any line.'],
   ]],
   ['plan', () => appOpen() && !drawerShown() && visible($('planNext')), [
-    ['#planNext', 'Ready for next month? This copies this budget forward with due dates moved on. Change anything after.'],
+    ['#planNext', 'Ready for next month? Tap this to create next month’s budget as a copy of this one, with due dates moved on. Then make any changes in the new month. This month stays as it is.'],
   ]],
 ];
 let tourOn = false, tipsTimer = null;
