@@ -126,15 +126,23 @@ function makeDb(hid) {
   };
 }
 
-// Budgets that started more than ~7 months ago almost never change, so they aren't re-downloaded on every
-// open: they come from the phone's own copy and are refreshed from the server once a week.
+// Only last month's budget, this month's and any already planned ahead are kept live. Older ones almost
+// never change, so they come from the phone's own copy and are refreshed from the server once a week.
 // The app still gets one combined list, exactly as before.
 function budgetsListener(ref, cb, err) {
-  const cutoff = iso(new Date(Date.now() - 210 * 864e5));
+  const today = iso(new Date()), cutKey = 'ep.cutoff.' + (H && H.id);
+  // where last month's budget starts: remembered from last time, or a safe two-month guess on first open
+  let cutoff = iso(new Date(Date.now() - 62 * 864e5));
+  try { const c = localStorage.getItem(cutKey); if (c && c <= today) cutoff = c; } catch {}
+  const remember = docs => {
+    const ps = docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.start && p.end).sort((a, b) => a.start.localeCompare(b.start));
+    const i = ps.findIndex(p => p.start <= today && today <= p.end); if (i < 1) return;
+    try { localStorage.setItem(cutKey, ps[i - 1].start); } catch {}
+  };
   const liveQ = query(ref, where('start', '>=', cutoff)), histQ = query(ref, where('start', '<', cutoff));
   const key = 'ep.histAt.' + (H && H.id);
   let hist = [], live = null, meta = { fromCache: true };
-  const emit = () => { if (live) cb({ docs: [...hist, ...live], metadata: meta }); };
+  const emit = () => { if (!live) return; const all = [...hist, ...live]; remember(all); cb({ docs: all, metadata: meta }); };
   (async () => {
     let stale = true; try { stale = Date.now() - Number(localStorage.getItem(key) || 0) > 7 * 864e5; } catch {}
     try { if (!stale) hist = (await getDocsFromCache(histQ)).docs; } catch { stale = true; }
