@@ -111,7 +111,7 @@ function makeDb(hid) {
       const ref = collection(fs, base + path);
       if (path === 'budgets') return { onSnapshot: (cb, err) => budgetsListener(ref, cb, err), add: body => addDoc(ref, body) };
       return {
-        onSnapshot: (cb, err) => onSnapshot(ref, { includeMetadataChanges: true }, cb, err),
+        onSnapshot: (cb, err) => onSnapshot(ref, { includeMetadataChanges: path === 'debts' || path === 'debtTx' }, cb, err),
         add: body => addDoc(ref, body),
       };
     },
@@ -401,12 +401,16 @@ const TOURS = [
     ['#planNext', 'Ready for next month? Tap this to create next month’s budget as a copy of this one, with due dates moved on. Then make any changes in the new month. This month stays as it is.'],
   ]],
 ];
-let tourOn = false, tipsTimer = null;
+let tourOn = false, tipsTimer = null, tipsObs = null;
+const allTipsSeen = () => TOURS.every(([k]) => META.tips[k]);
 function startTips() {
-  new MutationObserver(scheduleTips).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'data-tab'] });
+  if (allTipsSeen() || tipsObs) return; // nothing left to show: no page watching at all
+  tipsObs = new MutationObserver(scheduleTips);
+  tipsObs.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'data-tab'] });
   window.addEventListener('resize', scheduleTips);
   scheduleTips();
 }
+function stopTips() { if (tipsObs) { tipsObs.disconnect(); tipsObs = null; } window.removeEventListener('resize', scheduleTips); clearTimeout(tipsTimer); }
 function scheduleTips() { if (tourOn) return; clearTimeout(tipsTimer); tipsTimer = setTimeout(checkTips, 700); }
 function checkTips() {
   if (tourOn || document.body.classList.contains('typing') || $('epModal')) return;
@@ -415,13 +419,14 @@ function checkTips() {
 }
 function markSeen(key) {
   META.tips[key] = true;
+  if (allTipsSeen()) stopTips();
   if (UID) writeDoc(tipsPath(), { tips: { [key]: true } }, true).catch(() => {});
 }
 function resetTips() {
   const off = Object.fromEntries(TOURS.map(([k]) => [k, false]));
   META.tips = { ...off };
   if (UID) writeDoc(tipsPath(), { tips: off }, true).catch(() => {});
-  EP().toast('Tips will show again as you go'); scheduleTips();
+  EP().toast('Tips will show again as you go'); startTips();
 }
 function swipeStep() {
   const row = q('.row[data-canpay="1"]') || q('.group:not(.income) .row[data-line]'); if (!row) return null;

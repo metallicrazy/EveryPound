@@ -6,6 +6,9 @@
 <title>EveryPound</title>
 <meta name="theme-color" content="#ffffff">
 <meta name="description" content="Zero-based budgeting, no adverts.">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192-v2.png" type="image/png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon-v2.png">
@@ -687,6 +690,7 @@ a.btn { text-decoration: none; display: inline-block; }
     el.textContent = t; el.className = 'sync ' + cls;
   }
   window.addEventListener('online', syncState); window.addEventListener('offline', syncState);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) clearTyping(); });
   // Every write goes through here: it drives the save status and retries once after a brief connection blip
   async function tracked(fn) {
     pending++; syncState();
@@ -1344,7 +1348,10 @@ a.btn { text-decoration: none; display: inline-block; }
   }
 
   // ---------- render all ----------
+  let renderQ = 0;
+  const renderSoon = () => { if (!renderQ) renderQ = requestAnimationFrame(() => { renderQ = 0; render(); }); };
   function render() {
+    if (renderQ) { cancelAnimationFrame(renderQ); renderQ = 0; }
     renderHeader();
     const p = period();
     if (!p) return;
@@ -1352,6 +1359,13 @@ a.btn { text-decoration: none; display: inline-block; }
     const c = compute(p);
     renderLedger(c); renderSide(c);
     if (S.open && S.open.mode === 'line') renderDrawer(false);
+    clearTyping();
+  }
+  // The bottom bar hides while typing so it doesn't sit on the keyboard. Safari (iPhone/iPad) doesn't
+  // report "finished typing" when the box being typed in is redrawn away, so check after every redraw.
+  function clearTyping() {
+    const ae = document.activeElement;
+    if (!(ae && ae.isConnected && ae.matches && ae.matches('.inline-in'))) document.body.classList.remove('typing');
   }
   function showState(title, text) {
     $('stateScreen').innerHTML = `<h2>${esc(title)}</h2><p>${esc(text)}</p>`;
@@ -1682,7 +1696,7 @@ a.btn { text-decoration: none; display: inline-block; }
       render(); return;
     }
     S.txUnsub = S.db.collection('budgets/' + id + '/txns').onSnapshot(snap => {
-      S.txns = snap.docs.map(d => ({ id: d.id, ...d.data() })); render();
+      S.txns = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderSoon();
     }, () => toast('Transactions stopped updating. Reopen the page to reconnect.'));
     render();
   }
@@ -1845,7 +1859,7 @@ a.btn { text-decoration: none; display: inline-block; }
   document.addEventListener('focusin', e => {
     if (e.target.matches && e.target.matches('.inline-in')) { document.body.classList.add('typing'); keepInView(e.target.closest('.row') || e.target); }
   });
-  document.addEventListener('focusout', () => setTimeout(() => { if (!(document.activeElement && document.activeElement.matches && document.activeElement.matches('.inline-in'))) document.body.classList.remove('typing'); }, 0));
+  document.addEventListener('focusout', () => setTimeout(() => { clearTyping(); if (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) window.scrollTo(window.scrollX, window.scrollY); }, 50));
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.open) closeDrawer(); });
   document.addEventListener('submit', async e => {
     e.preventDefault();
@@ -1984,10 +1998,10 @@ a.btn { text-decoration: none; display: inline-block; }
     S.db = db;
     let settled = false;
     const timer = setTimeout(() => { if (!settled) showState("Can't reach your budget yet", 'Check your connection. This page keeps trying in the background.'); }, 10000);
-    db.collection('debts').onSnapshot(snap => { S.debts = Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }])); if (!snap.metadata.fromCache) S.debtsLoaded = true; render(); scheduleSync(); }, () => {});
-    db.collection('reminders').onSnapshot(snap => { S.reminders = snap.docs.map(d => ({ id: d.id, ...d.data() })); render(); if (S.open && S.open.mode === 'reminders' && S.open.page !== 'edit') renderDrawer(true); }, () => {});
-    db.collection('remState').onSnapshot(snap => { S.remState = Object.fromEntries(snap.docs.map(d => [d.id, d.data()])); render(); }, () => {});
-    db.collection('debtTx').onSnapshot(snap => { S.debtTx = snap.docs.map(d => ({ id: d.id, ...d.data() })); if (!snap.metadata.fromCache) S.debtTxLoaded = true; render(); scheduleSync(); }, () => {});
+    db.collection('debts').onSnapshot(snap => { S.debts = Object.fromEntries(snap.docs.map(d => [d.id, { id: d.id, ...d.data() }])); if (!snap.metadata.fromCache) S.debtsLoaded = true; renderSoon(); scheduleSync(); }, () => {});
+    db.collection('reminders').onSnapshot(snap => { S.reminders = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderSoon(); if (S.open && S.open.mode === 'reminders' && S.open.page !== 'edit') renderDrawer(true); }, () => {});
+    db.collection('remState').onSnapshot(snap => { S.remState = Object.fromEntries(snap.docs.map(d => [d.id, d.data()])); renderSoon(); }, () => {});
+    db.collection('debtTx').onSnapshot(snap => { S.debtTx = snap.docs.map(d => ({ id: d.id, ...d.data() })); if (!snap.metadata.fromCache) S.debtTxLoaded = true; renderSoon(); scheduleSync(); }, () => {});
     db.collection('budgets').onSnapshot(snap => {
       S.periods = snap.docs.map(d => fromDoc(d.id, d.data())).filter(p => p.start && p.end).sort((a, b) => a.start.localeCompare(b.start));
       if (!snap.metadata.fromCache) { settled = true; clearTimeout(timer); }
@@ -1995,7 +2009,7 @@ a.btn { text-decoration: none; display: inline-block; }
       if (!period()) {
         const t = todayISO(); const cur = S.periods.find(p => t >= p.start && t <= p.end) || S.periods[S.periods.length - 1];
         selectPeriod(cur.id);
-      } else render();
+      } else renderSoon();
       scheduleSync();
     }, () => { settled = true; clearTimeout(timer); showState("Can't reach your budget", 'Reopen this page to try again.'); });
   }
