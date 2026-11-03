@@ -854,6 +854,7 @@ a.btn { text-decoration: none; display: inline-block; }
   function balanceLabel(l) {
     if (!l.debtId) return '';
     if (!l.balanceSet) return '<b>Set the balance</b>';
+    if (l.limit) return ''; // the credit limit bar under the row already shows what's owed
     return 'Balance <span class="' + (l.balance < 0 ? 'owe' : 'clear') + '">' + (l.balance < 0 ? money(l.balance) : l.balance === 0 ? 'paid off' : money(l.balance)) + '</span>';
   }
   // Buckets a line can move to: income lines between income buckets, spending lines between spending
