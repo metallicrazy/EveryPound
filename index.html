@@ -833,6 +833,7 @@ a.btn { text-decoration: none; display: inline-block; }
   const fmtMonth = iso => { const d = parseISO(iso); return MONTHS[d.getMonth()] + ' ' + d.getFullYear(); };
   function promoPlan(l, p) {
     const d = l.debtId && S.debts[l.debtId]; if (!d || !d.promoEnd || !l.balanceSet) return null;
+    if (Number.isFinite(d.apr) && d.apr > 0) return null; // only 0% deals get a clear-it-by plan
     const owed = -Math.min(l.startBal, 0); if (owed <= 0) return { done: true };
     if (d.promoEnd < p.start) return { ended: true, end: d.promoEnd };
     const a = parseISO(p.end), b = parseISO(d.promoEnd);
@@ -1243,7 +1244,7 @@ a.btn { text-decoration: none; display: inline-block; }
               <small>What you owe today, before any payments you log here. It carries into every budget.</small></div>
             <div class="field wide"><label for="ndLimit">Credit limit (£)</label><input id="ndLimit" class="money" placeholder="Cards only, leave blank for loans"></div>
             <div class="field"><label for="ndApr">Interest rate (%)</label><input id="ndApr" inputmode="decimal" placeholder="0"></div>
-            <div class="field"><label for="ndPromo">0% offer ends</label><input id="ndPromo" type="date"></div>
+            <div class="field" id="ndPromoWrap"><label for="ndPromo">0% offer ends</label><input id="ndPromo" type="date"></div>
             <div class="field"><label for="ndPlan">Payment this month (£)</label><input id="ndPlan" class="money" placeholder="£0.00"></div>
             <div class="field"><label for="ndDue">Due date</label><input id="ndDue" type="date"></div>
             <div class="switches field wide">${switchRow('ndAuto', true, 'Auto-set future payments', AUTO_DESC)}${switchRow('ndDD', false, 'Direct debit', DD_DESC)}</div>
@@ -1315,7 +1316,7 @@ a.btn { text-decoration: none; display: inline-block; }
               <small>What you owed before tracking any payments here. It carries into every budget.</small></div>
             <div class="field wide"><label for="edLimit">Credit limit (£)</label><input id="edLimit" class="money" placeholder="Cards only, leave blank for loans" value="${Number.isFinite(debt.limit) && debt.limit > 0 ? (debt.limit / 100).toFixed(2) : ''}"></div>
             <div class="field"><label for="edApr">Interest rate (%)</label><input id="edApr" inputmode="decimal" placeholder="0" value="${Number.isFinite(debt.apr) ? debt.apr : ''}"></div>
-            <div class="field"><label for="edPromo">0% offer ends</label><input id="edPromo" type="date" value="${esc(debt.promoEnd || '')}"></div>
+            <div class="field" id="edPromoWrap"${Number.isFinite(debt.apr) && debt.apr > 0 ? ' hidden' : ''}><label for="edPromo">0% offer ends</label><input id="edPromo" type="date" value="${esc(debt.promoEnd || '')}"></div>
             ` : ''}
             <div class="switches field wide">${debt ? switchRow('edAuto', !raw.manual, 'Auto-set future payments', AUTO_DESC) : ''}${switchRow('edDD', !!raw.dd, 'Direct debit', DD_DESC)}</div>
           </div>
@@ -1861,6 +1862,12 @@ a.btn { text-decoration: none; display: inline-block; }
   });
   document.addEventListener('focusout', () => setTimeout(() => { clearTyping(); if (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) window.scrollTo(window.scrollX, window.scrollY); }, 50));
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.open) closeDrawer(); });
+  // Interest rate typed in: hide the 0% end date unless the rate is 0% (or not filled in)
+  document.addEventListener('input', e => {
+    if (e.target.id !== 'edApr' && e.target.id !== 'ndApr') return;
+    const v = parseFloat(e.target.value.replace('%', '')), wrap = $(e.target.id === 'edApr' ? 'edPromoWrap' : 'ndPromoWrap');
+    if (wrap) wrap.hidden = Number.isFinite(v) && v > 0;
+  });
   document.addEventListener('submit', async e => {
     e.preventDefault();
     if (e.target.id === 'txForm') {
@@ -1893,7 +1900,7 @@ a.btn { text-decoration: none; display: inline-block; }
       const aprRaw = $('ndApr').value.trim(), apr = aprRaw === '' ? null : parseFloat(aprRaw.replace('%', ''));
       if (apr !== null && !(Number.isFinite(apr) && apr >= 0)) return bad('Enter the interest rate as a number, like 0 or 24.9.');
       const planned = toPence($('ndPlan').value || '0'); if (!Number.isFinite(planned) || planned < 0) return bad('Enter this month\'s payment, like 50, or leave it at £0.');
-      const promoEnd = $('ndPromo').value || null, due = $('ndDue').value, dd = $('ndDD').checked, auto = $('ndAuto').checked;
+      const promoEnd = (apr > 0 ? null : $('ndPromo').value) || null, due = $('ndDue').value, dd = $('ndDD').checked, auto = $('ndAuto').checked;
       const groups = structuredClone(p.groups || []), g = groups.find(x => x.id === S.open.groupId); if (!g) { closeDrawer(); return; }
       // a card that was in an earlier budget but not this one comes back with its history, not as a duplicate
       const here = new Set(groups.flatMap(x => (x.lines || []).map(l => l.debtId)).filter(Boolean));
@@ -1964,7 +1971,7 @@ a.btn { text-decoration: none; display: inline-block; }
         const opening = v === null ? null : -Math.abs(v);
         const aprRaw = $('edApr').value.trim(), apr = aprRaw === '' ? null : parseFloat(aprRaw.replace('%', ''));
         if (apr !== null && !(Number.isFinite(apr) && apr >= 0)) { err.textContent = 'Enter the interest rate as a number, like 0 or 24.9.'; err.hidden = false; return; }
-        const promoEnd = $('edPromo').value || null;
+        const promoEnd = (apr > 0 ? null : $('edPromo').value) || null;
         const limRaw = $('edLimit') ? $('edLimit').value.trim() : '', limit = limRaw === '' ? null : toPence(limRaw);
         if (limit !== null && !(Number.isFinite(limit) && limit > 0)) { err.textContent = 'Enter the credit limit, like 3000, or leave it blank for a loan.'; err.hidden = false; return; }
         const body = { name, opening, apr, promoEnd, limit };

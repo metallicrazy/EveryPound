@@ -2,7 +2,7 @@
 // The app's own files: always ask the server first (so updates show straight away), cached copy when offline.
 // Firebase scripts and fonts (versioned, never change): cached copy first.
 // Firestore and sign-in traffic is never touched here (Firestore keeps its own offline copy).
-const CACHE = 'everypound-v21';
+const CACHE = 'everypound-v22';
 const SHELL = ['./', 'index.html', 'app.js', 'firebase-config.js', 'manifest.webmanifest', 'icons/icon-192-v2.png'];
 const CDN = ['www.gstatic.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
