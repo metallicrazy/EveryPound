@@ -393,8 +393,8 @@ const TOURS = [
   ['budget', () => appOpen() && !drawerShown() && (tab() === 'budget' || matchMedia('(min-width: 861px)').matches) && !!q('.row[data-line]'), [
     ['.group.income .l-plan', TOUCH ? 'Start with your income. Press and hold the amount to type what’s coming in this month.' : 'Start with your income. Click the amount to type what’s coming in this month.'],
     ['.group:not(.income) .row[data-line] .l-plan', (TOUCH ? 'Press and hold any amount to plan it, or tap a line to open it.' : 'Click any amount to plan it.') + ' Keep going until every pound has a job and the banner turns green.'],
-    [() => q('.row[data-canpay="1"]') || q('.group:not(.income) .row[data-line]'), null, null, 'swipe'],
     ['#pTitleBtn', (TOUCH ? 'Tap' : 'Click') + ' the month to jump to any budget, past or future.'],
+    [() => q('.row[data-canpay="1"]') || q('.group:not(.income) .row[data-line]'), null, null, 'swipe'],
   ]],
   ['summary', () => appOpen() && !drawerShown() && visible($('side')) && !!q('.ring-wrap'), [
     ['.ring-wrap', 'Where your income goes, split by bucket.'],
@@ -439,10 +439,26 @@ function resetTips() {
 function swipeStep() {
   const row = q('.row[data-canpay="1"]') || q('.group:not(.income) .row[data-line]'); if (!row) return null;
   const paid = row.dataset.canpay === '1';
-  const text = TOUCH
-    ? (paid ? 'Swipe a line left to mark it Paid, or right to delete it.' : 'Swipe a line right to delete it. Direct debits also swipe left to mark them Paid.') + ' Press and hold a name to rename it.'
-    : 'Hover over a line for Delete and, on direct debits, Paid. Click a name to rename it.';
-  return { el: row, text, peek: TOUCH ? (paid ? 'swiped-paid' : 'swiped-del') : null };
+  const text = (TOUCH
+    ? (paid ? 'Swipe a line left to mark it Paid, or right to delete it.' : 'Swipe a line right to delete it. Direct debits also swipe left to mark them Paid.')
+    : 'Hover over a line for Delete and, on direct debits, Paid.')
+    + ' To make a line a direct debit, open it and tap the pencil.';
+  return { el: row, text, peek: TOUCH ? (paid ? 'swiped-paid' : 'swiped-del') : null, extra: { label: 'Show me', run: () => showDirectDebit(row) } };
+}
+// "Show me": open that line's edit page and spotlight the Direct debit switch first
+const wait = ms => new Promise(r => setTimeout(r, ms));
+async function showDirectDebit(row) {
+  const lineId = row.dataset.line;
+  tourOn = true; // hold other tips back while the pages open
+  const open = row.querySelector('[data-open]'); if (open) open.click();
+  await wait(450);
+  const pen = q('[data-editpage]'); if (pen) pen.click();
+  await wait(450);
+  tourOn = false;
+  if (!visible($('editForm'))) { scheduleTips(); return; }
+  const editSteps = TOURS.find(([k]) => k === 'edit')[2];
+  const dd = editSteps.find(st => st[0] === '#edDD');
+  runTour('edit', [[dd[0], 'Switch Direct debit on here. Back on the budget you can then swipe this line left to mark it Paid.', dd[2]], ...editSteps.filter(st => st !== dd)], TOURS.find(([k]) => k === 'edit')[1]);
 }
 // The spotlit element stays usable (try it, then Next); everything around it is dimmed and blocked.
 function runTour(key, steps, when) {
@@ -457,7 +473,7 @@ function runTour(key, steps, when) {
   document.body.insertAdjacentHTML('beforeend', `<div class="tour" id="tour"><div class="tour-hole" id="tourHole"></div>
     <div class="tour-block" data-b="t"></div><div class="tour-block" data-b="b"></div><div class="tour-block" data-b="l"></div><div class="tour-block" data-b="r"></div>
     <div class="tour-bubble" id="tourBubble" role="dialog" aria-live="polite"><p id="tourText"></p>
-    <div class="tour-foot"><button type="button" class="btn ghost" id="tourSkip">Skip</button><span id="tourCount"></span><button type="button" class="btn" id="tourNext">Next</button></div></div></div>`);
+    <div class="tour-foot"><button type="button" class="btn ghost" id="tourSkip">Skip</button><span id="tourCount"></span><button type="button" class="btn ghost" id="tourExtra" hidden></button><button type="button" class="btn" id="tourNext">Next</button></div></div></div>`);
   let i = -1, st = null, peekT = null, lastRect = null;
   const place = () => {
     // follow the element if the app re-draws it (e.g. after you change an amount)
@@ -488,6 +504,8 @@ function runTour(key, steps, when) {
     st.el.scrollIntoView({ block: 'center', behavior: 'instant' });
     $('tourText').textContent = st.text;
     $('tourCount').textContent = steps.length > 1 ? (i + 1) + ' of ' + steps.length : '';
+    $('tourExtra').hidden = !st.extra; if (st.extra) $('tourExtra').textContent = st.extra.label;
+    if (st.extra) $('tourCount').textContent = ''; // room for the extra button on small phones
     $('tourNext').textContent = steps.slice(i + 1).some(resolve) ? 'Next' : 'Got it';
     requestAnimationFrame(place); setTimeout(place, 120);
     clearTimeout(peekT);
@@ -512,6 +530,7 @@ function runTour(key, steps, when) {
   };
   const onKey = e => { if (e.key === 'Escape' && !document.body.classList.contains('typing') && !(document.activeElement && document.activeElement.matches('input'))) end(); };
   $('tourSkip').onclick = () => end();
+  $('tourExtra').onclick = () => { const x = st && st.extra; end(); if (x) x.run(); };
   $('tourNext').onclick = () => { if (document.activeElement && document.activeElement.matches('input')) document.activeElement.blur(); go(); };
   addEventListener('resize', place); addEventListener('scroll', place, true); addEventListener('keydown', onKey);
   go();
